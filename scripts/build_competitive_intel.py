@@ -98,13 +98,18 @@ def compute_weather_profiles() -> pd.DataFrame:
 
 def compute_peer_similarity(weather_profiles: pd.DataFrame,
                             top_n: int = 20) -> pd.DataFrame:
+    """Compute peer similarity per season.
+
+    Previously this only computed peers for the latest season, which meant that
+    when the current season had sparse early-year weather coverage (e.g. 2026
+    with only Triple-A weather populated), teams in other levels ended up with
+    zero peers and the Teams-to-Emulate tab rendered empty. Now we iterate over
+    every season that has a weather profile, so historical seasons always have
+    peer data available even when the current season is still filling in.
+    """
     console.print("\n[bold yellow]Computing weather-aware peer similarity...[/bold yellow]")
 
-    # Use latest season weather
-    latest_season = int(weather_profiles["season"].max())
-    wp = weather_profiles[weather_profiles["season"] == latest_season].copy()
-
-    # Load demographics (latest census year per venue)
+    # Demographics are season-agnostic (one latest snapshot per venue).
     demos = pd.read_sql(text("""
         SELECT t.team_id,
                vd.msa_population, vd.msa_poverty_rate,
@@ -120,57 +125,58 @@ def compute_peer_similarity(weather_profiles: pd.DataFrame,
           AND v.capacity IS NOT NULL
     """), engine)
 
-    # Merge weather + demographics
-    merged = wp.merge(demos, on="team_id", how="inner")
     required = ["avg_temp_f", "avg_precip_in", "pct_rain_games",
                 "msa_population", "msa_poverty_rate", "capacity"]
-    before = len(merged)
-    merged = merged.dropna(subset=required)
-    if len(merged) < before:
-        console.print(f"  Dropped {before - len(merged)} teams with missing data")
+    all_rows = []
 
-    console.print(f"  Building similarity for {len(merged)} teams")
+    for season in sorted(weather_profiles["season"].unique()):
+        wp = weather_profiles[weather_profiles["season"] == season].copy()
+        merged = wp.merge(demos, on="team_id", how="inner").dropna(subset=required)
 
-    # Feature matrix
-    features = merged[required].copy()
-    features["log_msa_pop"] = np.log1p(features["msa_population"])
-    features = features.drop(columns=["msa_population"])
+        if len(merged) < 2:
+            console.print(f"  Season {season}: only {len(merged)} teams qualify — skipping")
+            continue
 
-    scaler = StandardScaler()
-    X = scaler.fit_transform(features.values)
+        features = merged[required].copy()
+        features["log_msa_pop"] = np.log1p(features["msa_population"])
+        features = features.drop(columns=["msa_population"])
 
-    # Column indices after transform: avg_temp, avg_precip, pct_rain, poverty, capacity, log_pop
-    # Weather = first 3, Demo = last 3
-    WEATHER_IDX = [0, 1, 2]
-    DEMO_IDX = [3, 4, 5]
+        # Fit a scaler per season so drift year-over-year doesn't squash signal.
+        scaler = StandardScaler()
+        X = scaler.fit_transform(features.values)
 
-    D_full = pairwise_distances(X)
-    D_weather = pairwise_distances(X[:, WEATHER_IDX])
-    D_demo = pairwise_distances(X[:, DEMO_IDX])
+        # Columns after transform: avg_temp, avg_precip, pct_rain, poverty, capacity, log_pop
+        WEATHER_IDX = [0, 1, 2]
+        DEMO_IDX = [3, 4, 5]
 
-    team_ids = merged["team_id"].values
-    rows = []
-    for i in range(len(team_ids)):
-        sorted_j = np.argsort(D_full[i])
-        count = 0
-        for j in sorted_j:
-            if i == j:
-                continue
-            rows.append({
-                "team_id": int(team_ids[i]),
-                "peer_team_id": int(team_ids[j]),
-                "distance": round(float(D_full[i, j]), 4),
-                "similarity_score": round(1.0 / (1.0 + float(D_full[i, j])), 4),
-                "weather_dist": round(float(D_weather[i, j]), 4),
-                "demo_dist": round(float(D_demo[i, j]), 4),
-                "season": latest_season,
-            })
-            count += 1
-            if count >= top_n:
-                break
+        D_full = pairwise_distances(X)
+        D_weather = pairwise_distances(X[:, WEATHER_IDX])
+        D_demo = pairwise_distances(X[:, DEMO_IDX])
 
-    result = pd.DataFrame(rows)
-    console.print(f"  {len(result)} peer similarity pairs (top {top_n} per team)")
+        team_ids = merged["team_id"].values
+        for i in range(len(team_ids)):
+            sorted_j = np.argsort(D_full[i])
+            count = 0
+            for j in sorted_j:
+                if i == j:
+                    continue
+                all_rows.append({
+                    "team_id": int(team_ids[i]),
+                    "peer_team_id": int(team_ids[j]),
+                    "distance": round(float(D_full[i, j]), 4),
+                    "similarity_score": round(1.0 / (1.0 + float(D_full[i, j])), 4),
+                    "weather_dist": round(float(D_weather[i, j]), 4),
+                    "demo_dist": round(float(D_demo[i, j]), 4),
+                    "season": int(season),
+                })
+                count += 1
+                if count >= top_n:
+                    break
+
+        console.print(f"  Season {season}: {len(merged)} teams -> peers computed")
+
+    result = pd.DataFrame(all_rows)
+    console.print(f"  {len(result)} peer similarity pairs total across {result['season'].nunique()} seasons")
     return result
 
 
