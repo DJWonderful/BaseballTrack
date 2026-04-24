@@ -61,7 +61,9 @@ def load_rec_count():
 def load_top_promo_lifts():
     """Top positive promo lifts at the league level -- our 'wins'."""
     return query_df("""
-        SELECT promo_type, sport_id, marginal_lift::float, p_value::float
+        SELECT promo_type, sport_id,
+               marginal_lift::float AS marginal_lift,
+               p_value::float       AS p_value
           FROM milb.promo_lift
          WHERE p_value < 0.05 AND scope = 'league_level' AND marginal_lift > 0
          ORDER BY marginal_lift DESC
@@ -73,7 +75,9 @@ def load_top_promo_lifts():
 def load_negative_promo_lifts():
     """Promotions that hurt attendance -- the surprising finds."""
     return query_df("""
-        SELECT promo_type, sport_id, marginal_lift::float, p_value::float
+        SELECT promo_type, sport_id,
+               marginal_lift::float AS marginal_lift,
+               p_value::float       AS p_value
           FROM milb.promo_lift
          WHERE p_value < 0.05 AND scope = 'league_level' AND marginal_lift < 0
          ORDER BY marginal_lift ASC

@@ -151,7 +151,10 @@ def load_promo_lift_for_peers(team_id: int, peer_ids: tuple):
         return pd.DataFrame()
     ids_str = ", ".join(str(p) for p in peer_ids)
     return query_df(f"""
-        SELECT team_id, promo_type, marginal_lift::float, p_value::float, scope
+        SELECT team_id, promo_type,
+               marginal_lift::float AS marginal_lift,
+               p_value::float       AS p_value,
+               scope
         FROM milb.promo_lift
         WHERE scope = 'team_all'
           AND team_id IN ({team_id}, {ids_str})
@@ -544,6 +547,10 @@ with tab_emulate:
         color="bar_color", color_discrete_map="identity",
         labels={"avg_cap_util": "Capacity Utilization", "label": ""},
     )
+    # Rank bars by actual value: highest cap util at top, lowest at bottom.
+    # Without this, the selected team's bar lands wherever the DataFrame row
+    # order puts it, which can visually pin a low-ranked team to the top.
+    fig.update_yaxes(categoryorder="total ascending")
     # Peer average line
     peer_avg = peers["avg_cap_util"].mean() if not peers["avg_cap_util"].isna().all() else None
     if peer_avg:
