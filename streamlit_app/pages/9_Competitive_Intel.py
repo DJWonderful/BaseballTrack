@@ -187,6 +187,23 @@ def load_available_seasons():
 
 
 @st.cache_data(ttl=600)
+def latest_season_with_peers(team_id: int) -> int | None:
+    """Most recent season where this team has weather_peer_similarity rows.
+
+    Used to default the season picker: if the current year's weather coverage
+    is still filling in (e.g. 2026 early-season), peers won't exist yet, and
+    dropping to the latest completed season avoids an empty-page experience.
+    """
+    df = query_df(f"""
+        SELECT MAX(season) AS s FROM milb.weather_peer_similarity
+        WHERE team_id = {team_id}
+    """)
+    if df.empty or pd.isna(df.iloc[0]["s"]):
+        return None
+    return int(df.iloc[0]["s"])
+
+
+@st.cache_data(ttl=600)
 def load_funnel_candidates(season: int):
     """One row per team with every dimension the Peer Funnel can filter on.
 
@@ -329,9 +346,20 @@ with st.sidebar:
 
     st.divider()
 
+    # Resolve team_id so we can pick a sensible default season -- the latest
+    # one with peer data for this team. When the current year is mid-season
+    # and peers haven't been built yet, this avoids landing on an empty tab.
+    _team_row = teams_df[teams_df["team_name"] == selected_team_name]
+    _team_id = int(_team_row.iloc[0]["team_id"]) if not _team_row.empty else None
+
     seasons = load_available_seasons()
     if seasons:
-        selected_season = st.selectbox("Season", seasons, index=0)
+        default_season_idx = 0
+        if _team_id is not None:
+            latest_with_peers = latest_season_with_peers(_team_id)
+            if latest_with_peers in seasons:
+                default_season_idx = seasons.index(latest_with_peers)
+        selected_season = st.selectbox("Season", seasons, index=default_season_idx)
     else:
         selected_season = 2025
 
@@ -371,7 +399,15 @@ with tab_emulate:
     peers = load_weather_peers(team_id, selected_season)
 
     if peers.empty:
-        st.warning("No weather peer data available. Run `build_competitive_intel.py` first.")
+        fallback = latest_season_with_peers(team_id)
+        if fallback and fallback != selected_season:
+            st.info(
+                f"No peer data for **{selected_team_name}** in **{selected_season}** yet "
+                f"(weather coverage for the current season is still filling in). "
+                f"Switch the sidebar **Season** to **{fallback}** to see peers."
+            )
+        else:
+            st.warning("No weather peer data available. Run `build_competitive_intel.py` first.")
         st.stop()
 
     # KPI row
