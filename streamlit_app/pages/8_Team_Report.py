@@ -308,7 +308,6 @@ def render_group_tab(group_type: str, group_key: str, season: int,
         st.divider()
         st.subheader("Capacity Utilization Ranking")
 
-        team_stats = team_stats.sort_values("avg_cap_util", ascending=True)
         colors = [
             "#3498db" if tid == highlight_team_id else GREY
             for tid in team_stats["team_id"]
@@ -325,6 +324,11 @@ def render_group_tab(group_type: str, group_key: str, season: int,
             labels={"avg_cap_util": "Capacity Utilization", "team_name": ""},
             height=max(300, len(team_stats) * 22),
         )
+        # Rank by actual value: highest cap util at the top, lowest at the
+        # bottom. Without this, the hero team's bar lands wherever the DataFrame
+        # row order happens to put it, which can pin a low-ranked team to the
+        # top of the chart.
+        fig.update_yaxes(categoryorder="total ascending")
         fig.update_layout(
             showlegend=False,
             margin=dict(t=10, b=20),
