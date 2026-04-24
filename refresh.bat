@@ -142,9 +142,17 @@ echo.
 echo [Phase 3/3] LLM Narrative Generation (requires Ollama)
 echo ----------------------------------------
 
+echo [1/2] Team + group rollup narratives...
 python scripts/generate_narratives.py %FORCE_ANALYTICS%
 if errorlevel 1 (
     echo WARNING: generate_narratives.py failed (is Ollama running?)
+)
+
+echo.
+echo [2/2] Competitive-intelligence narrative (Binghamton)...
+python scripts/generate_narratives.py --competitive-intel %FORCE_ANALYTICS%
+if errorlevel 1 (
+    echo WARNING: generate_narratives.py --competitive-intel failed (is Ollama running?)
 )
 
 echo.
