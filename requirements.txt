@@ -20,3 +20,6 @@ scipy>=1.13
 # Deployed backend (Parquet + DuckDB). Required on Streamlit Cloud.
 duckdb>=1.5
 pyarrow>=15.0
+
+# What-if simulator on the Recommendations page loads a saved XGBoost model
+xgboost>=2.0
