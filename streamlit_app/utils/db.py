@@ -21,7 +21,24 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
-BACKEND = os.getenv("APP_BACKEND", "postgres").lower()
+
+def _resolve_backend() -> str:
+    """Pick a backend from st.secrets first, then env. Default: postgres.
+
+    Streamlit Cloud's "Secrets" UI populates st.secrets but NOT os.environ, so
+    we have to peek at both. If no secrets file exists locally, st.secrets raises
+    FileNotFoundError on key access — swallow it and fall back to env.
+    """
+    try:
+        import streamlit as st  # type: ignore
+        if "APP_BACKEND" in st.secrets:
+            return str(st.secrets["APP_BACKEND"]).lower()
+    except Exception:
+        pass
+    return os.getenv("APP_BACKEND", "postgres").lower()
+
+
+BACKEND = _resolve_backend()
 DATA_DIR = Path(__file__).parent.parent.parent / "data" / "app"
 
 

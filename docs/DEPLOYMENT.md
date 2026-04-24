@@ -17,10 +17,11 @@ The backend is selected by the `APP_BACKEND` env var. Default is `postgres`. On 
    - Repository: `DJWonderful/BaseballTrack`
    - Branch: `main`
    - Main file: `streamlit_app/app.py`
-2. In **Advanced settings → Secrets** (or the app's `.streamlit/secrets.toml`), add:
+2. In **Advanced settings → Secrets** (the TOML box in the Streamlit Cloud UI), add:
    ```toml
    APP_BACKEND = "duckdb"
    ```
+   `db.py` checks `st.secrets["APP_BACKEND"]` first and falls back to the env var, so either surface works. The Secrets UI is the canonical place on Streamlit Cloud.
 3. Click Deploy. First build takes ~2-3 min while `pip install` runs.
 
 No DB credentials go to the cloud. The entire dataset ships as Parquet files in the repo.
