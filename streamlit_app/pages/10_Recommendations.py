@@ -24,7 +24,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from utils.db import query_df, execute
+from utils.db import query_df, execute, is_read_only
 from utils.filters import game_type_filter, game_type_sql, operator_filter
 from utils.theme import (
     SEASON_COLORS, DIVERGING, POSITIVE, NEGATIVE, NEUTRAL,
@@ -1262,28 +1262,37 @@ with tab_recs:
                             pass
 
                     # -- Feedback loop: record what was done about this rec ----
-                    st.divider()
-                    st.markdown("**Track this recommendation**")
-                    action_key = f"act_{tid}_{rec['category']}_{rec['title']}"
-                    col_s, col_n = st.columns([1, 2])
-                    with col_s:
-                        new_status = st.selectbox(
-                            "Status",
-                            ACTION_STATUSES,
-                            index=ACTION_STATUSES.index(existing_status) if existing_status in ACTION_STATUSES else 0,
-                            key=f"status_{action_key}",
-                        )
-                    with col_n:
-                        new_notes = st.text_input(
-                            "Notes (what did you do?)",
-                            value=existing_notes,
-                            key=f"notes_{action_key}",
-                            placeholder="e.g. Added to August calendar, first test weekend",
-                        )
-                    if st.button("Save", key=f"save_{action_key}"):
-                        save_rec_action(tid, rec["category"], rec["title"], new_status, new_notes)
-                        st.success(f"Saved as '{new_status}'.")
-                        st.rerun()
+                    if is_read_only():
+                        # Deployed demo uses a read-only Parquet snapshot — no
+                        # persistent writes available. Show current status but
+                        # skip the editor.
+                        if existing_status:
+                            st.divider()
+                            st.caption(f"Status (read-only): **{existing_status}**"
+                                       + (f" — {existing_notes}" if existing_notes else ""))
+                    else:
+                        st.divider()
+                        st.markdown("**Track this recommendation**")
+                        action_key = f"act_{tid}_{rec['category']}_{rec['title']}"
+                        col_s, col_n = st.columns([1, 2])
+                        with col_s:
+                            new_status = st.selectbox(
+                                "Status",
+                                ACTION_STATUSES,
+                                index=ACTION_STATUSES.index(existing_status) if existing_status in ACTION_STATUSES else 0,
+                                key=f"status_{action_key}",
+                            )
+                        with col_n:
+                            new_notes = st.text_input(
+                                "Notes (what did you do?)",
+                                value=existing_notes,
+                                key=f"notes_{action_key}",
+                                placeholder="e.g. Added to August calendar, first test weekend",
+                            )
+                        if st.button("Save", key=f"save_{action_key}"):
+                            save_rec_action(tid, rec["category"], rec["title"], new_status, new_notes)
+                            st.success(f"Saved as '{new_status}'.")
+                            st.rerun()
 
 
 # ==============================================================================

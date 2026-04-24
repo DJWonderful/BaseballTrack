@@ -98,7 +98,7 @@ def load_matchups(game_types: tuple = ("R",)) -> pd.DataFrame:
             g.sport_id                          AS home_sport_id,
             g.away_team_id,
             g.away_team_name,
-            at.sport_id                         AS away_sport_id,
+            awt.sport_id                         AS away_sport_id,
             g.season,
             g.attendance,
             hv.latitude                         AS home_lat,
@@ -110,8 +110,8 @@ def load_matchups(game_types: tuple = ("R",)) -> pd.DataFrame:
         LEFT JOIN milb.teams  ht ON ht.team_id  = g.home_team_id
         LEFT JOIN milb.venues hv ON hv.venue_id = ht.venue_id
         -- Join away team → their home venue for distance calculation
-        LEFT JOIN milb.teams  at ON at.team_id  = g.away_team_id
-        LEFT JOIN milb.venues av ON av.venue_id = at.venue_id
+        LEFT JOIN milb.teams  awt ON awt.team_id = g.away_team_id
+        LEFT JOIN milb.venues av  ON av.venue_id = awt.venue_id
         WHERE g.abstract_game_state = 'Final'
           AND {game_type_sql(game_types, col="g.game_type")}
           AND g.attendance IS NOT NULL

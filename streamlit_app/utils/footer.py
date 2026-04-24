@@ -8,7 +8,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from utils.db import query_df
+from utils.db import query_df, is_read_only
 
 
 @st.cache_data(ttl=600)
@@ -85,6 +85,9 @@ def render_footer(scripts: list[str] | None = None) -> None:
     elif not runs.empty:
         oldest = runs["started_at"].min()
         pieces.append(f"Oldest analytics run: **{_fmt_ago(oldest)}**")
+
+    if is_read_only():
+        pieces.append("Snapshot (read-only)")
 
     if pieces:
         st.caption("  •  ".join(pieces))
