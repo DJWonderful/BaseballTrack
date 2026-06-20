@@ -39,12 +39,21 @@ FRI_DOW, SAT_DOW = 4, 5  # game_features.day_of_week: Mon=0..Sun=6
 RP_COLOR = "#b064a0"        # purple from SEASON_COLORS 2026 -- distinctive
 PEER_COLOR = "#95a5a6"      # neutral grey
 
+# Drop the July 4 holiday window from Fri/Sat aggregations. July 4 always has
+# fireworks regardless of which day of the week it falls on, so including it
+# (or July 3 / July 5 when the holiday is observed adjacent) contaminates the
+# "did the team choose Fri or Sat for fireworks" comparison.
+HOLIDAY_EXCLUDE = """
+    AND NOT (EXTRACT(MONTH FROM game_date) = 7
+             AND EXTRACT(DAY FROM game_date) IN (3, 4, 5))
+""".strip()
+
 
 # -- Data loaders -------------------------------------------------------------
 
 @st.cache_data(ttl=600)
 def load_rp_fri_sat() -> pd.DataFrame:
-    """Per-season Fri vs Sat averages for the Rumble Ponies."""
+    """Per-season Fri vs Sat averages for the Rumble Ponies, July 4 excluded."""
     return query_df(f"""
         SELECT season,
                day_of_week,
@@ -56,6 +65,7 @@ def load_rp_fri_sat() -> pd.DataFrame:
            AND day_of_week IN ({FRI_DOW}, {SAT_DOW})
            AND game_type = 'R'
            AND attendance IS NOT NULL
+           {HOLIDAY_EXCLUDE}
          GROUP BY season, day_of_week
          ORDER BY season, day_of_week
     """)
@@ -78,6 +88,7 @@ def load_doublea_sat_promo_mix() -> pd.DataFrame:
              AND game_type = 'R'
              AND attendance IS NOT NULL
              AND day_of_week IN ({FRI_DOW}, {SAT_DOW})
+             {HOLIDAY_EXCLUDE}
         ),
         team_dow AS (
           SELECT team_id, season, day_of_week,
@@ -141,6 +152,7 @@ def load_rp_sat_promo_mix() -> pd.DataFrame:
              AND day_of_week = {SAT_DOW}
              AND game_type = 'R'
              AND attendance IS NOT NULL
+             {HOLIDAY_EXCLUDE}
         ),
         game_promo AS (
           SELECT game_pk,
@@ -208,7 +220,9 @@ wide["Friday"] = wide["Friday"].round(0).astype(int)
 wide["Saturday"] = wide["Saturday"].round(0).astype(int)
 st.caption(
     "Each pair of bars: one season. Every season the Friday bar is taller. "
-    "Note 2026 is mid-season (through June)."
+    "Note 2026 is mid-season (through June). The July 3-5 holiday window is "
+    "excluded — July 4 fireworks are calendar-driven, not a team scheduling "
+    "choice."
 )
 
 st.divider()
@@ -370,4 +384,4 @@ see_also([
      "the full prioritized recommendation list for Binghamton"),
 ])
 
-render_footer()
+render_footer(scripts=["build_features", "promo_lift_cf"])

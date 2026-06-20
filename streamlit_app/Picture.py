@@ -62,7 +62,8 @@ def load_rp_kpis() -> dict:
     """)
     out["cap_util_2023"] = float(prev["cap"].iloc[0]) if not prev.empty else None
 
-    # 2. Sat vs Fri gap (2025 last complete year)
+    # 2. Sat vs Fri gap (2025 last complete year). Exclude July 4 holiday
+    # window so the gap reflects team scheduling, not calendar-driven fireworks.
     gap = query_df(f"""
         SELECT day_of_week, AVG(attendance) AS avg_att, COUNT(*) AS n
           FROM milb.game_features
@@ -71,6 +72,8 @@ def load_rp_kpis() -> dict:
            AND day_of_week IN (4, 5)
            AND game_type = 'R'
            AND attendance IS NOT NULL
+           AND NOT (EXTRACT(MONTH FROM game_date) = 7
+                    AND EXTRACT(DAY FROM game_date) IN (3, 4, 5))
          GROUP BY day_of_week
     """)
     if not gap.empty:

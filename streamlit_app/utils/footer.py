@@ -64,8 +64,11 @@ def render_footer(scripts: list[str] | None = None) -> None:
     """Render a one-line 'data as of' footer.
 
     scripts: optional list of analysis_runs script_names this page depends on.
-             If given, the footer shows the oldest of those, so staleness
-             reflects the weakest link.
+             If given, the footer reflects the OLDEST of just those scripts
+             (so staleness reflects the page's actual weakest link).
+             If not given, the footer shows the NEWEST run across all
+             scripts, which matches the user's mental model of "I just
+             refreshed, so I should see today."
     """
     st.divider()
 
@@ -77,14 +80,16 @@ def render_footer(scripts: list[str] | None = None) -> None:
         pieces.append(f"Games last collected: **{_fmt_ago(collect_ts)}**")
 
     if scripts and not runs.empty:
+        # Page-scoped: show the oldest of the page's declared dependencies.
         mask = runs["analysis_name"].isin(scripts)
         subset = runs[mask]
         if not subset.empty:
             oldest = subset["started_at"].min()
             pieces.append(f"Analytics last run: **{_fmt_ago(oldest)}**")
     elif not runs.empty:
-        oldest = runs["started_at"].min()
-        pieces.append(f"Oldest analytics run: **{_fmt_ago(oldest)}**")
+        # Unscoped page: show the newest run overall (most pages refreshed today).
+        newest = runs["started_at"].max()
+        pieces.append(f"Analytics last computed: **{_fmt_ago(newest)}**")
 
     if is_read_only():
         pieces.append("Snapshot (read-only)")

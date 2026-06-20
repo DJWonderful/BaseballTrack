@@ -234,4 +234,4 @@ see_also([
      "detailed attendance cuts by team and date"),
 ])
 
-render_footer()
+render_footer(scripts=["build_features"])

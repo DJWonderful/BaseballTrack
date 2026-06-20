@@ -329,4 +329,4 @@ see_also([
      "the full promo strategy view"),
 ])
 
-render_footer()
+render_footer(scripts=["build_features"])
