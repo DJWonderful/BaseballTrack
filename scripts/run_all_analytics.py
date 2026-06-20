@@ -1,12 +1,21 @@
-"""Run every analytics script in dependency order.
+"""Run every analytics script in dependency order, then refresh the deployed
+app's parquet snapshot.
 
 Two-command refresh:
     python scripts/collect_all.py            # raw MLB API data
-    python scripts/run_all_analytics.py      # everything that reads from it
+    python scripts/run_all_analytics.py      # analytics + parquet export
 
-Idempotent by default: skips any script whose latest analysis_runs row is
-status='completed' and completed today. Pass --force to re-run everything.
-Pass --list to preview what would run without executing anything.
+After this finishes, review the diff under data/app/ and push:
+    git add data/app/ && git commit -m "data: refresh" && git push
+
+Idempotent by default: skips any analytics script whose latest analysis_runs
+row is status='completed' and completed today. Pass --force to re-run
+everything (and re-export). Pass --list to preview without executing.
+
+The parquet export at the end runs by default any time at least one analytics
+step actually ran -- skip it with --no-export. If every analytics step was
+already current, the export is skipped too since the underlying tables are
+unchanged.
 
 LLM-using scripts (peer_playbook) default to --skip-llm so this runs without
 Ollama. Pass --with-llm to allow them to call the LLM.
@@ -128,6 +137,18 @@ def run_step(step: Step, force: bool, with_llm: bool) -> tuple[bool, str]:
     return False, f"exited {result.returncode} after {elapsed:.1f}s"
 
 
+def run_export() -> tuple[bool, str]:
+    """Run scripts/export_for_app.py to refresh the deployed parquet snapshot."""
+    cmd = [sys.executable, "scripts/export_for_app.py"]
+    print(f"\n>>> export_for_app  ({' '.join(cmd[1:])})", flush=True)
+    t0 = time.time()
+    result = subprocess.run(cmd, cwd=str(ROOT))
+    elapsed = time.time() - t0
+    if result.returncode == 0:
+        return True, f"done in {elapsed:.1f}s"
+    return False, f"exited {result.returncode} after {elapsed:.1f}s"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Run every analytics script.")
     p.add_argument("--force", action="store_true",
@@ -136,6 +157,9 @@ def main() -> int:
                    help="Print the plan and exit without running anything.")
     p.add_argument("--with-llm", action="store_true",
                    help="Allow peer_playbook to call its LLM (default: --skip-llm).")
+    p.add_argument("--no-export", action="store_true",
+                   help="Skip the parquet export step at the end. "
+                        "(Default: export runs whenever any analytics step ran.)")
     args = p.parse_args()
 
     engine = _engine()
@@ -154,10 +178,21 @@ def main() -> int:
         name, _, desc = step
         flag = "RUN " if will_run else "skip"
         print(f"  [{flag}]  {name:24s}  {desc}")
-    print("=" * 70)
     n_run = sum(1 for _, w in plan if w)
     n_skip = len(plan) - n_run
-    print(f"  {n_run} to run, {n_skip} to skip"
+
+    # Export step indicator -- runs only when something changed and not opted out.
+    export_will_run = (n_run > 0) and not args.no_export
+    export_flag = "RUN " if export_will_run else "skip"
+    export_why = (
+        ""
+        if export_will_run
+        else (" (--no-export)" if args.no_export else " (no analytics changes)")
+    )
+    print(f"  [{export_flag}]  {'export_for_app':24s}  "
+          f"refresh data/app/*.parquet for deployed Streamlit Cloud{export_why}")
+    print("=" * 70)
+    print(f"  {n_run} analytics to run, {n_skip} to skip"
           + ("  (--force overrides skip)" if not args.force else ""))
 
     if args.list:
@@ -175,11 +210,24 @@ def main() -> int:
         if not ok:
             print(f"\nFAILED: {step[0]} ({msg})")
             print("Stopping. Fix the failure and re-run; completed steps will be "
-                  "skipped automatically.")
+                  "skipped automatically. Parquet export was NOT run.")
             return 1
         print(f"<<< {step[0]}  {msg}")
 
+    if export_will_run:
+        ok, msg = run_export()
+        if not ok:
+            print(f"\nFAILED: export_for_app ({msg})")
+            print("Analytics succeeded but parquet export failed. "
+                  "Re-run with: python scripts/export_for_app.py")
+            return 1
+        print(f"<<< export_for_app  {msg}")
+
     print(f"\nAll done in {time.time() - overall_t0:.1f}s.")
+    if export_will_run:
+        print("Next: review the diff under data/app/, then "
+              "`git add data/app/ && git commit -m \"data: refresh\" && git push` "
+              "to ship to Streamlit Cloud.")
     return 0
 
 
