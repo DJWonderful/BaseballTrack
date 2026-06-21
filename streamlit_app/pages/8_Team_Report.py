@@ -464,23 +464,41 @@ with tabs[tab_idx]:
 
     # --- Attendance trend (all teams) ---------------------------------------
     if not trend.empty:
-        st.subheader("Attendance Trend")
         month_labels = {4: "Apr", 5: "May", 6: "Jun", 7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct"}
         trend["month_label"] = trend["month"].map(month_labels).fillna(trend["month"].astype(str))
         trend["season_str"] = trend["season"].astype(str)
 
-        fig = px.line(
-            trend,
-            x="month_label",
-            y="avg_att",
-            color="season_str",
-            markers=True,
-            labels={"month_label": "Month", "avg_att": "Avg Attendance", "season_str": "Season"},
-            color_discrete_map=SEASON_COLORS,
-            height=350,
-        )
-        fig.update_layout(margin=dict(t=10, b=20))
-        st.plotly_chart(fig, use_container_width=True)
+        att_tab, cu_tab = st.tabs(["Attendance", "Capacity Utilization"])
+
+        with att_tab:
+            st.caption("Average fans per game by month. Raw attendance varies with venue size — use Capacity Utilization to compare across teams.")
+            fig_att = px.line(
+                trend,
+                x="month_label",
+                y="avg_att",
+                color="season_str",
+                markers=True,
+                labels={"month_label": "Month", "avg_att": "Avg Attendance", "season_str": "Season"},
+                color_discrete_map=SEASON_COLORS,
+                height=350,
+            )
+            fig_att.update_layout(margin=dict(t=10, b=20))
+            st.plotly_chart(fig_att, use_container_width=True)
+
+        with cu_tab:
+            st.caption("Fans ÷ seats. Normalizes for venue size — use this when comparing to peer teams or the league.")
+            fig_cu = px.line(
+                trend,
+                x="month_label",
+                y="avg_cap_util",
+                color="season_str",
+                markers=True,
+                labels={"month_label": "Month", "avg_cap_util": "Cap Utilization", "season_str": "Season"},
+                color_discrete_map=SEASON_COLORS,
+                height=350,
+            )
+            fig_cu.update_layout(margin=dict(t=10, b=20), yaxis_tickformat=".0%")
+            st.plotly_chart(fig_cu, use_container_width=True)
 
         st.divider()
 

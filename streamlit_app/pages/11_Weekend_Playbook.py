@@ -95,6 +95,75 @@ def load_fri_sat_games(season: int):
     """)
 
 
+@st.cache_data(ttl=300)
+def load_team_season_trend(team_id: int):
+    """Cap util by season (2023+) to show stabilization trajectory."""
+    return query_df(f"""
+        SELECT season,
+               AVG(attendance)::int      AS avg_att,
+               AVG(capacity_utilization) AS avg_cap_util,
+               COUNT(*)                  AS games
+          FROM milb.game_features
+         WHERE team_id = {team_id}
+           AND game_type = 'R'
+           AND attendance IS NOT NULL
+           AND season >= 2023
+         GROUP BY season
+         ORDER BY season
+    """)
+
+
+@st.cache_data(ttl=300)
+def load_market_context(team_id: int):
+    """Latest MSA demographics and operator context for a team."""
+    return query_df(f"""
+        WITH latest AS (
+            SELECT season, census_year,
+                   population_trend,
+                   population_change_5yr_pct,
+                   income_change_5yr_pct
+              FROM milb.game_features
+             WHERE team_id = {team_id}
+               AND game_type = 'R'
+               AND attendance IS NOT NULL
+             ORDER BY season DESC, game_date DESC
+             LIMIT 1
+        )
+        SELECT l.population_trend,
+               l.population_change_5yr_pct,
+               l.income_change_5yr_pct,
+               vd.msa_population,
+               vd.msa_median_income,
+               vd.msa_name,
+               COALESCE(o.operator_name, 'Independent') AS operator_name
+          FROM latest l
+          JOIN milb.teams t ON t.team_id = {team_id}
+          JOIN milb.venues v ON v.venue_id = t.venue_id
+          JOIN milb.venue_demographics vd
+               ON vd.venue_id = v.venue_id AND vd.census_year = l.census_year
+          LEFT JOIN milb.team_operators o ON o.operator_id = t.operator_id
+    """)
+
+
+@st.cache_data(ttl=300)
+def load_dow_cap_util(team_id: int, season: int):
+    """Avg cap util for Fri / Sat / Sun games for the team."""
+    return query_df(f"""
+        SELECT day_of_week,
+               AVG(capacity_utilization) AS avg_cap_util,
+               AVG(attendance)::int      AS avg_att,
+               COUNT(*)                  AS games
+          FROM milb.game_features
+         WHERE team_id = {team_id}
+           AND season = {season}
+           AND game_type = 'R'
+           AND attendance IS NOT NULL
+           AND day_of_week IN (4, 5, 6)
+         GROUP BY day_of_week
+         ORDER BY day_of_week
+    """)
+
+
 # -- Sidebar ------------------------------------------------------------------
 
 with st.sidebar:
@@ -190,6 +259,47 @@ if not hl.empty:
         f"Camp: **{CAMP_LABEL[rp_row['gap_camp']]}**."
     )
 
+# 2026 trajectory: show if multi-season data is available
+_trend = load_team_season_trend(highlight_team_id)
+if not _trend.empty and len(_trend) >= 2:
+    _seasons = _trend.to_dict("records")
+    _latest = _seasons[-1]
+    _prev = _seasons[-2]
+    _delta_pp = (float(_latest["avg_cap_util"]) - float(_prev["avg_cap_util"])) * 100
+    _expanded = bool(_delta_pp > 1)  # auto-expand when showing positive news
+    with st.expander(
+        f"Trajectory: {highlight_name} capacity utilization across seasons",
+        expanded=_expanded,
+    ):
+        _cols = st.columns(len(_seasons))
+        for i, (_col, _r) in enumerate(zip(_cols, _seasons)):
+            _d = None
+            if i > 0:
+                _d = f"{(float(_r['avg_cap_util']) - float(_seasons[i-1]['avg_cap_util']))*100:+.1f}pp"
+            _col.metric(
+                f"{int(_r['season'])}  ({int(_r['games'])} games)",
+                f"{float(_r['avg_cap_util']):.0%}",
+                delta=_d,
+                delta_color="normal",
+            )
+        if _delta_pp > 1:
+            st.success(
+                f"Cap utilization is up **{_delta_pp:+.1f}pp** in {int(_latest['season'])} "
+                f"vs {int(_prev['season'])}. The decline has stabilized — now the question "
+                "is which levers accelerate the recovery."
+            )
+        elif _delta_pp < -1:
+            st.warning(
+                f"Cap utilization is down {abs(_delta_pp):.1f}pp in {int(_latest['season'])}. "
+                "The Saturday promo gap is a meaningful part of what to fix."
+            )
+        else:
+            st.info(
+                f"Cap utilization is tracking close to {int(_prev['season'])} — "
+                "stabilizing, but not yet improving. The Saturday fireworks move "
+                "is the clearest near-term lever."
+            )
+
 
 # -- Act 2 --------------------------------------------------------------------
 
@@ -201,22 +311,34 @@ if losers.empty:
 else:
     losers["level"] = losers["sport_id"].map(LEVEL_ORDER)
     losers["gap_pct_display"] = losers["gap_pct"].apply(lambda x: f"{x*100:+.1f}%")
+    losers["cap_util_display"] = losers["season_cap_util"].apply(
+        lambda x: f"{x:.0%}" if pd.notna(x) else "-"
+    )
     losers["cap_pts_display"] = losers["gap_cap_util_pts"].apply(
-        lambda x: f"{x*100:+.2f}" if pd.notna(x) else "-"
+        lambda x: f"{x*100:+.2f}pp" if pd.notna(x) else "-"
     )
     losers["season_avg_display"] = losers["season_avg"].apply(lambda x: f"{int(x):,}")
     losers["fri_display"] = losers["fri_avg"].apply(lambda x: f"{int(x):,}")
     losers["sat_display"] = losers["sat_avg"].apply(lambda x: f"{int(x):,}")
 
+    _MOMENTUM_ICON = {
+        "surging": "🟢 surging", "improving": "🟢 improving",
+        "stable": "🟡 stable", "declining": "🔴 declining",
+        "struggling": "🔴 struggling",
+    }
+    losers["momentum_display"] = (
+        losers["momentum_label"].map(_MOMENTUM_ICON).fillna(losers["momentum_label"].fillna("-"))
+    )
+
     show_cols = {
         "team_name": "Team",
         "level": "Level",
-        "season_avg_display": "Season avg",
-        "fri_display": "Fri avg",
-        "sat_display": "Sat avg",
-        "gap_pct_display": "Gap %",
-        "cap_pts_display": "Cap-util gap (pts)",
-        "momentum_label": "Momentum",
+        "cap_util_display": "Cap util",
+        "cap_pts_display": "Sat-Fri cap gap",
+        "gap_pct_display": "Fan gap %",
+        "fri_display": "Fri avg fans",
+        "sat_display": "Sat avg fans",
+        "momentum_display": "Momentum",
         "operator_name": "Operator",
     }
     st.dataframe(
@@ -227,6 +349,15 @@ else:
     lvl_split = losers["level"].value_counts().to_dict()
     split_line = ", ".join(f"{lvl}: {n}" for lvl, n in lvl_split.items())
     st.caption(f"{len(losers)} teams total -- {split_line}")
+
+    improving_ct = losers["momentum_label"].isin(["surging", "improving"]).sum()
+    declining_ct = losers["momentum_label"].isin(["declining", "struggling"]).sum()
+    if improving_ct > 0:
+        st.markdown(
+            f"**{improving_ct} of {len(losers)} sat-losers are already on an improving trajectory.** "
+            "The Saturday gap is a pattern that can be corrected — "
+            "teams showing improvement tend to have started shifting high-draw promotions to Saturday night."
+        )
 
 
 # -- Act 3 --------------------------------------------------------------------
@@ -360,6 +491,81 @@ else:
         )
         st.markdown(f"**Divergences from Sat-winner average > 10 points:**\n\n{divergence_bullets}")
 
+# -- Market context (top-level, after Act 4) ----------------------------------
+
+_mkt = load_market_context(highlight_team_id)
+if not _mkt.empty:
+    _m = _mkt.iloc[0]
+    with st.expander(
+        f"Market context: demographics, operator, and structural factors for {highlight_name}",
+        expanded=False,
+    ):
+        _mc1, _mc2, _mc3 = st.columns(3)
+        _msa_pop  = _m.get("msa_population")
+        _msa_inc  = _m.get("msa_median_income")
+        _pop_chg  = _m.get("population_change_5yr_pct")
+        _inc_chg  = _m.get("income_change_5yr_pct")
+        _pop_trnd = (_m.get("population_trend") or "unknown").lower()
+        _operator = _m.get("operator_name") or "Independent"
+        _msa_name = _m.get("msa_name") or ""
+
+        _mc1.metric(
+            "MSA Population",
+            f"{int(_msa_pop):,}" if _msa_pop else "-",
+            delta=f"{_pop_chg:+.1f}% (5-yr)" if pd.notna(_pop_chg) else None,
+            delta_color="normal" if (_pop_chg or 0) >= 0 else "inverse",
+        )
+        _mc2.metric(
+            "MSA Median Income",
+            f"${int(_msa_inc):,}" if _msa_inc else "-",
+            delta=f"{_inc_chg:+.1f}% (5-yr)" if pd.notna(_inc_chg) else None,
+            delta_color="normal" if (_inc_chg or 0) >= 0 else "inverse",
+        )
+        _mc3.metric("Operator", _operator)
+
+        if _msa_name:
+            st.caption(f"MSA: {_msa_name}")
+
+        _notes = []
+        if _pop_trnd in ("shrinking", "declining"):
+            _notes.append(
+                "**Market population is contracting** — a structural headwind. "
+                "Promotions can drive incremental attendance but can't reverse demographic drift. "
+                "Capacity utilization benchmarks (not raw attendance) are the fair comparison for this market."
+            )
+        elif _pop_trnd in ("growing", "surging"):
+            _notes.append(
+                "**Market population is growing** — a long-term tailwind. "
+                "The Saturday gap is more correctable here: there are fans to reach."
+            )
+        if pd.notna(_inc_chg) and _inc_chg < -2:
+            _notes.append(
+                "**Median income has been declining** — fan price sensitivity is elevated. "
+                "Ticket Deals and Food Deals may outperform in this market even if they underperform league-wide."
+            )
+
+        for _n in _notes:
+            st.info(_n)
+
+        # DBH context if this operator appears in the gap data
+        if "diamond" in _operator.lower():
+            _dbh_rows = gap[gap["operator_name"].str.contains("Diamond", case=False, na=False)]
+            if not _dbh_rows.empty:
+                _dbh_loser_pct = (_dbh_rows["gap_camp"] == "sat_loser").mean()
+                _dbh_fw_pct = (
+                    raw[
+                        (raw["day_of_week"] == SAT_DOW) &
+                        (raw["operator_name"].str.contains("Diamond", case=False, na=False))
+                    ]["has_fireworks"].fillna(False).astype(int).mean()
+                    if not raw.empty else float("nan")
+                )
+                st.caption(
+                    f"**{_operator} context:** {_dbh_loser_pct*100:.0f}% of its "
+                    f"{len(_dbh_rows)} qualifying teams are Sat-losers. "
+                    f"Saturday fireworks rate across the portfolio: "
+                    f"{_dbh_fw_pct*100:.0f}% — compare to non-{_operator} operators in Act 5."
+                )
+
 
 # -- Act 5 --------------------------------------------------------------------
 
@@ -436,6 +642,173 @@ if not dbh_row.empty:
         f"vs {non_fw*100:.0f}% elsewhere. "
         "Worth a dedicated follow-up; not a claim about operator policy."
     )
+
+
+# -- Friday evening: the case for weekday promotions -------------------------
+
+st.header("Friday Evening: The Weekday Promo Opportunity")
+st.markdown(
+    "When fans show up on a Friday with no promotion, they came for the game. "
+    "That means a promotion on Friday adds on top of a baseline that's already there — "
+    "and the incremental lift is visible. "
+    "Here's how Sat-winners and Sat-losers differ in their **Friday** promo investment, "
+    "and where the highlighted team sits."
+)
+
+_fri_raw = raw[raw["day_of_week"] == FRI_DOW].copy()
+for _flag in PROMO_FLAGS:
+    _fri_raw[_flag] = _fri_raw[_flag].fillna(False).astype(int)
+
+_fri_with_camp = _fri_raw.merge(
+    gap_all[["team_id", "gap_camp", "sport_id"]].drop_duplicates("team_id"),
+    on="team_id", how="left",
+)
+_fri_level = _fri_with_camp[_fri_with_camp["sport_id"] == hl_sport_id]
+
+if not _fri_level.empty:
+    _fri_col_left, _fri_col_right = st.columns(2)
+
+    with _fri_col_left:
+        # Camp-level cap util on Fridays
+        _fri_camp_cu = (
+            _fri_level[_fri_level["gap_camp"].isin(("sat_winner", "sat_loser"))]
+            .groupby("gap_camp")
+            .agg(avg_cap_util=("capacity_utilization", "mean"), games=("team_id", "count"))
+            .reset_index()
+        )
+        _fri_camp_cu["camp_label"] = _fri_camp_cu["gap_camp"].map(CAMP_LABEL)
+        _fri_camp_cu["avg_cap_util_pct"] = _fri_camp_cu["avg_cap_util"] * 100
+        _hl_fri = _fri_raw[_fri_raw["team_id"] == highlight_team_id]
+        _hl_fri_cu = float(_hl_fri["capacity_utilization"].mean()) if not _hl_fri.empty else None
+
+        _fig_fri_cu = px.bar(
+            _fri_camp_cu,
+            x="camp_label", y="avg_cap_util_pct",
+            color="camp_label",
+            color_discrete_map={CAMP_LABEL[k]: v for k, v in CAMP_COLORS.items()},
+            text_auto=".1f",
+            labels={"avg_cap_util_pct": "Avg cap util %", "camp_label": "Camp"},
+            title=f"Friday avg cap utilization — {hl_level_name}",
+        )
+        _fig_fri_cu.update_traces(texttemplate="%{y:.1f}%")
+        _fig_fri_cu.update_layout(showlegend=False, height=340)
+        if _hl_fri_cu is not None:
+            _fig_fri_cu.add_hline(
+                y=_hl_fri_cu * 100, line_dash="dash", line_color="#000",
+                annotation_text=f"{highlight_name}: {_hl_fri_cu:.0%}",
+                annotation_position="top right",
+            )
+        _fri_col_left.plotly_chart(_fig_fri_cu, use_container_width=True)
+
+    with _fri_col_right:
+        # Friday promo rate: team vs Sat-winner camp
+        _top_flags = ["has_fireworks", "has_giveaway", "has_food_deal",
+                      "has_ticket_deal", "has_theme_night", "has_kids_event"]
+        _fri_rows = []
+        for _f in _top_flags:
+            _hl_pct = float(_hl_fri[_f].mean() * 100) if not _hl_fri.empty else 0.0
+            _winner_pct = float(
+                _fri_level[_fri_level["gap_camp"] == "sat_winner"][_f].mean() * 100
+            )
+            _loser_pct  = float(
+                _fri_level[_fri_level["gap_camp"] == "sat_loser"][_f].mean() * 100
+            )
+            _fri_rows.append({
+                "Promo": PROMO_LABELS[_f],
+                f"{highlight_name} (Fri %)": _hl_pct,
+                f"Sat-winner Fri %": _winner_pct,
+                f"Sat-loser Fri %": _loser_pct,
+            })
+        _fri_promo_df = pd.DataFrame(_fri_rows)
+        for _c in [f"{highlight_name} (Fri %)", "Sat-winner Fri %", "Sat-loser Fri %"]:
+            _fri_promo_df[_c] = _fri_promo_df[_c].map("{:.0f}%".format)
+        _fri_col_right.caption(
+            f"**Friday promo rates** — {highlight_name} vs camp benchmarks ({hl_level_name})"
+        )
+        _fri_col_right.dataframe(_fri_promo_df, hide_index=True, use_container_width=True)
+
+    st.markdown(
+        "**What the data suggests:** Promotions on Friday attract fans who might not have "
+        "come otherwise — a different audience than the core Saturday crowd. "
+        "Sat-winners typically run lighter Friday calendars (they're saving the spectacle for Saturday), "
+        "but when they do promote on Friday, they lean toward food deals and ticket deals "
+        "that lower the barrier for casual fans. "
+        "Weekday and Friday promo ROI warrants a dedicated analysis pass."
+    )
+
+
+# -- Sunday: early signals ----------------------------------------------------
+
+st.header("Sunday: Early Look")
+st.markdown(
+    "Sunday games haven't been formally classified into winner / loser camps yet — "
+    "the data story here is preliminary. The chart below shows cap utilization "
+    "across the three weekend days for the highlighted team."
+)
+
+_dow_data = load_dow_cap_util(highlight_team_id, ANALYSIS_SEASON)
+if not _dow_data.empty:
+    _DOW_LABEL = {4: "Friday", 5: "Saturday", 6: "Sunday"}
+    _DOW_COLOR = {"Friday": "#3498db", "Saturday": "#2ecc71", "Sunday": "#e67e22"}
+    _dow_data["day_label"] = _dow_data["day_of_week"].map(_DOW_LABEL)
+    _dow_data = _dow_data.dropna(subset=["day_label"])
+
+    _sun_col1, _sun_col2 = st.columns([2, 1])
+    with _sun_col1:
+        _fig_dow = px.bar(
+            _dow_data,
+            x="day_label", y="avg_cap_util",
+            color="day_label",
+            color_discrete_map=_DOW_COLOR,
+            text_auto=".0%",
+            labels={"avg_cap_util": "Avg cap util", "day_label": "Day"},
+            title=f"{highlight_name}: Weekend cap utilization ({ANALYSIS_SEASON})",
+        )
+        _fig_dow.update_traces(texttemplate="%{y:.0%}")
+        _fig_dow.update_layout(
+            showlegend=False, height=320, yaxis_tickformat=".0%",
+            xaxis={"categoryorder": "array", "categoryarray": ["Friday", "Saturday", "Sunday"]},
+        )
+        _sun_col1.plotly_chart(_fig_dow, use_container_width=True)
+
+    with _sun_col2:
+        _sun_row = _dow_data[_dow_data["day_label"] == "Sunday"]
+        _fri_row = _dow_data[_dow_data["day_label"] == "Friday"]
+        _sat_row = _dow_data[_dow_data["day_label"] == "Saturday"]
+        if not _sun_row.empty:
+            st.metric(
+                f"Sunday cap util ({int(_sun_row.iloc[0]['games'])} games)",
+                f"{float(_sun_row.iloc[0]['avg_cap_util']):.0%}",
+            )
+        if not _fri_row.empty:
+            st.metric(
+                f"Friday cap util ({int(_fri_row.iloc[0]['games'])} games)",
+                f"{float(_fri_row.iloc[0]['avg_cap_util']):.0%}",
+            )
+        if not _sat_row.empty:
+            st.metric(
+                f"Saturday cap util ({int(_sat_row.iloc[0]['games'])} games)",
+                f"{float(_sat_row.iloc[0]['avg_cap_util']):.0%}",
+            )
+
+    if not _sun_row.empty and not _sat_row.empty:
+        _sun_cu = float(_sun_row.iloc[0]["avg_cap_util"])
+        _sat_cu = float(_sat_row.iloc[0]["avg_cap_util"])
+        _gap_pp = (_sat_cu - _sun_cu) * 100
+        if abs(_gap_pp) > 3:
+            st.info(
+                f"{'Saturday outperforms Sunday' if _gap_pp > 0 else 'Sunday outperforms Saturday'} "
+                f"by {abs(_gap_pp):.1f}pp for {highlight_name}. "
+                "A deeper Sunday promo analysis — mirroring the Friday-Saturday work — "
+                "is the logical next step."
+            )
+
+    st.caption(
+        "Sunday hasn't been modeled for Sat-winner / Sat-loser camps. "
+        "Use the Scheduling page for game-time distributions on Sunday."
+    )
+else:
+    st.caption(f"No Sunday game data available for {highlight_name} in {ANALYSIS_SEASON}.")
 
 
 # -- Footer / nav -------------------------------------------------------------
