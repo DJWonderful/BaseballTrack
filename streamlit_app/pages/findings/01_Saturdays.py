@@ -51,7 +51,6 @@ HOLIDAY_EXCLUDE = """
 
 # -- Data loaders -------------------------------------------------------------
 
-@st.cache_data(ttl=600)
 def load_rp_fri_sat() -> pd.DataFrame:
     """Per-season Fri vs Sat averages for the Rumble Ponies, July 4 excluded."""
     return query_df(f"""
@@ -71,7 +70,6 @@ def load_rp_fri_sat() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_doublea_sat_promo_mix() -> pd.DataFrame:
     """Double-A Saturday fireworks/giveaway rate per season, classified by
     whether the team's Sat avg beats its Fri avg.
@@ -141,7 +139,6 @@ def load_doublea_sat_promo_mix() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_rp_sat_promo_mix() -> pd.DataFrame:
     """RP's own Saturday fireworks/giveaway rate per season."""
     return query_df(f"""
@@ -190,7 +187,7 @@ st.divider()
 st.subheader("What we see")
 
 rp = load_rp_fri_sat()
-if rp.empty:
+if not isinstance(rp, pd.DataFrame) or rp.empty:
     st.warning("No Friday/Saturday attendance data available.")
     st.stop()
 

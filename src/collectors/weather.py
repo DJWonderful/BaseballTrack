@@ -105,12 +105,19 @@ def collect_weather(session: Session, team_id: int | None = None,
         ) as progress:
             task = progress.add_task("Weather", total=len(venue_months))
 
+            yesterday = date.today() - timedelta(days=1)
             for venue_id, lat, lon, month_start in venue_months:
-                # Calculate month end
+                # Calculate month end, capped at yesterday (archive API has no future data)
                 if month_start.month == 12:
                     month_end = date(month_start.year + 1, 1, 1) - timedelta(days=1)
                 else:
                     month_end = date(month_start.year, month_start.month + 1, 1) - timedelta(days=1)
+                month_end = min(month_end, yesterday)
+
+                if month_end < month_start:
+                    # Entire month is in the future; skip silently
+                    progress.advance(task)
+                    continue
 
                 try:
                     weather_data = fetch_weather(

@@ -36,7 +36,6 @@ LEAGUE_COLOR = "#3a9bd5"
 
 # -- Data loaders -------------------------------------------------------------
 
-@st.cache_data(ttl=600)
 def load_rp_sundays() -> pd.DataFrame:
     return query_df(f"""
         SELECT season,
@@ -53,7 +52,6 @@ def load_rp_sundays() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_doublea_sundays() -> pd.DataFrame:
     return query_df(f"""
         SELECT season,
@@ -70,7 +68,6 @@ def load_doublea_sundays() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_doublea_sunday_leaders() -> pd.DataFrame:
     """Top Double-A Sunday performers in the most recent complete season (2025).
 
@@ -96,7 +93,6 @@ def load_doublea_sunday_leaders() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_rp_sun_promo_mix() -> pd.DataFrame:
     return query_df(f"""
         WITH rp_sun AS (
@@ -150,7 +146,7 @@ st.subheader("What we see")
 rp = load_rp_sundays()
 da = load_doublea_sundays()
 
-if rp.empty:
+if not isinstance(rp, pd.DataFrame) or rp.empty:
     st.warning("No Sunday data available.")
     st.stop()
 

@@ -937,8 +937,20 @@ def main():
             out_df["run_id"] = run_id
             out_df["computed_at"] = pd.Timestamp.now()
 
-            # Convert evidence dict to JSON string
-            out_df["evidence"] = out_df["evidence"].apply(json.dumps)
+            # Convert evidence dict to JSON string. Scrub NaN -> None first
+            # because Postgres JSON rejects the literal token "NaN" that
+            # json.dumps emits by default for float NaN values.
+            def _clean_nan(obj):
+                if isinstance(obj, dict):
+                    return {k: _clean_nan(v) for k, v in obj.items()}
+                if isinstance(obj, list):
+                    return [_clean_nan(v) for v in obj]
+                if isinstance(obj, float) and pd.isna(obj):
+                    return None
+                return obj
+            out_df["evidence"] = out_df["evidence"].apply(
+                lambda d: json.dumps(_clean_nan(d))
+            )
 
             with engine.begin() as conn:
                 conn.execute(text("TRUNCATE milb.team_recommendations"))

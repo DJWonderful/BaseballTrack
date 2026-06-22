@@ -32,12 +32,12 @@ DAY_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 # -- Data loaders -------------------------------------------------------------
 
-@st.cache_data(ttl=600)
 def load_dow_by_season() -> pd.DataFrame:
     """League-wide attendance and cap util by season x day-of-week.
 
     Filtered to a common Mar 27 - Jun 20 window across years so the in-flight
-    2026 season is comparable to prior years (apples-to-apples)."""
+    2026 season is comparable to prior years (apples-to-apples).
+    Not decorated with @st.cache_data directly — query_df already caches."""
     return query_df("""
         WITH same_window AS (
           SELECT season, day_of_week, attendance, capacity_utilization
@@ -62,9 +62,9 @@ def load_dow_by_season() -> pd.DataFrame:
     """)
 
 
-@st.cache_data(ttl=600)
 def load_league_season_trend() -> pd.DataFrame:
-    """League average attendance per season -- apples-to-apples window."""
+    """League average attendance per season -- apples-to-apples window.
+    Not decorated with @st.cache_data directly — query_df already caches."""
     return query_df("""
         SELECT season,
                COUNT(*) AS n_games,
@@ -103,8 +103,8 @@ st.divider()
 st.subheader("What we see")
 
 df = load_dow_by_season()
-if df.empty:
-    st.warning("No league trend data available.")
+if not isinstance(df, pd.DataFrame) or df.empty:
+    st.warning("League trend data is not available yet. Run `python scripts/export_for_app.py` to refresh the data snapshot.")
     st.stop()
 
 df["day"] = df["day_of_week"].map(DAY_NAMES)
