@@ -103,7 +103,7 @@ You MUST return ONLY a single JSON object with this shape:
       "day": "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun",
       "status": "off" | "keep" | "change" | "test" | "skip",
       "proposed_ritual": proposed ritual name or null,
-      "category": "fireworks" | "giveaway" | "kids" | "family/community" | "food/drink" | "ticket deal" | "theme" | "rest",
+      "category": "fireworks" | "giveaway" | "kids" | "family/community" | "alcohol" | "food" | "ticket deal" | "theme" | "rest",
       "rationale": "one short sentence under 30 words explaining the call"
     }
   ]
@@ -224,11 +224,63 @@ def load_rp_current_rituals() -> list[dict]:
 
 
 # Offer-name keywords that override the LLM-enriched flag categorization.
-# Many "two-for-one" drink rituals get tagged is_ticket_deal=TRUE by the
-# enrichment pipeline because the deal mechanic looks like a ticket promo;
-# the actual product is drinks, so this should land as food/drink.
-DRINK_KEYWORDS = ("twofer", "two-for", "two for", "thirsty", "wine wednesday",
-                  "taco tuesday", "fryday", "weenie")
+# The pipeline's is_food_deal flag conflates food, non-alcohol drinks, and
+# alcohol. We need them split: 22 of 25 top-cohort teams run 0 or 1
+# alcohol nights per week, so the "stack alcohol on multiple days" reading
+# of the raw flag is wrong.
+ALCOHOL_KEYWORDS = (
+    "thirsty", "beer", "wine", "vodka", "whiskey", "margarita", "mimosa",
+    "tito", "koozie", "white claw", "landon winery", "pbr", "yuengling",
+    "happy hour", "tall boys", "bullpen party", "weenie",
+    "$3 thursday", "three dollar thursday",
+    "twofer", "two-for", "two for tuesday",
+)
+FOOD_KEYWORDS = (
+    "taco", "hot dog", "burger", "cheeseburger", "pizza", "fryday",
+    "bell value", "lemon chill", "chewsday",
+)
+
+# Combined drink override (used for the legacy _categorize() function)
+DRINK_KEYWORDS = ALCOHOL_KEYWORDS + FOOD_KEYWORDS
+
+
+def deal_subtype(offer_name: str) -> str | None:
+    """Return 'alcohol' / 'food' / None for a given recurring offer name."""
+    n = (offer_name or "").lower()
+    if any(k in n for k in ALCOHOL_KEYWORDS):
+        return "alcohol"
+    if any(k in n for k in FOOD_KEYWORDS):
+        return "food"
+    return None
+
+
+# SQL CASE expression that mirrors deal_subtype() so we can aggregate at
+# the database level. Keep in sync with the Python function above.
+DEAL_TYPE_SQL = """
+  CASE
+    WHEN offer_name ILIKE '%thirsty%' OR offer_name ILIKE '%beer%'
+      OR offer_name ILIKE '%wine%' OR offer_name ILIKE '%vodka%'
+      OR offer_name ILIKE '%whiskey%' OR offer_name ILIKE '%margarita%'
+      OR offer_name ILIKE '%mimosa%' OR offer_name ILIKE '%tito%'
+      OR offer_name ILIKE '%koozie%' OR offer_name ILIKE '%white claw%'
+      OR offer_name ILIKE '%landon winery%' OR offer_name ILIKE '%pbr%'
+      OR offer_name ILIKE '%yuengling%' OR offer_name ILIKE '%happy hour%'
+      OR offer_name ILIKE '%tall boys%' OR offer_name ILIKE '%bullpen party%'
+      OR offer_name ILIKE '%weenie%whiskey%'
+      OR offer_name ILIKE '%$3 thursday%'
+      OR offer_name ILIKE '%three dollar thursday%'
+      OR offer_name ILIKE '%twofer%' OR offer_name ILIKE '%two-for%'
+      OR offer_name ILIKE '%two for tuesday%'
+    THEN 'alcohol'
+    WHEN offer_name ILIKE '%taco%' OR offer_name ILIKE '%hot dog%'
+      OR offer_name ILIKE '%burger%' OR offer_name ILIKE '%cheeseburger%'
+      OR offer_name ILIKE '%pizza%' OR offer_name ILIKE '%fryday%'
+      OR offer_name ILIKE '%bell value%' OR offer_name ILIKE '%lemon chill%'
+      OR offer_name ILIKE '%chewsday%'
+    THEN 'food'
+    ELSE NULL
+  END
+"""
 
 
 def _categorize(row, name: str = "") -> str:
@@ -241,6 +293,55 @@ def _categorize(row, name: str = "") -> str:
     if row.get("is_ticket"):     return "ticket deal"
     if row.get("is_theme"):      return "theme"
     return "other"
+
+
+def load_rp_dow_outcomes() -> dict[str, dict]:
+    """RP's actual capacity-utilization outcome per day of week, current
+    season and the seasonal trend on Tuesday/Wednesday/Thursday.
+
+    Used in the LLM context so the model knows Tuesday is RP's worst day
+    and is collapsing across seasons, even with the current ritual in place.
+    """
+    cur = pd.read_sql(text(f"""
+        SELECT day_of_week,
+               COUNT(*) AS n,
+               ROUND(AVG(capacity_utilization)::numeric, 3) AS cap_util
+          FROM milb.game_features
+         WHERE team_id = {BINGHAMTON_ID}
+           AND season = 2025
+           AND game_type = 'R'
+           AND attendance IS NOT NULL
+         GROUP BY day_of_week
+         ORDER BY day_of_week
+    """), engine)
+    dow_label = {0:"Mon",1:"Tue",2:"Wed",3:"Thu",4:"Fri",5:"Sat",6:"Sun"}
+    by_day: dict[str, dict] = {}
+    for _, row in cur.iterrows():
+        d = dow_label.get(int(row["day_of_week"]))
+        if d:
+            by_day[d] = {"cap_util": float(row["cap_util"]), "n_games": int(row["n"])}
+
+    trend = pd.read_sql(text(f"""
+        SELECT season, day_of_week, COUNT(*) AS n,
+               ROUND(AVG(capacity_utilization)::numeric, 3) AS cap_util
+          FROM milb.game_features
+         WHERE team_id = {BINGHAMTON_ID}
+           AND game_type = 'R'
+           AND attendance IS NOT NULL
+           AND day_of_week IN (1, 2, 3)
+         GROUP BY season, day_of_week ORDER BY season, day_of_week
+    """), engine)
+    trend_by_day: dict[str, list[dict]] = {}
+    for _, row in trend.iterrows():
+        d = dow_label.get(int(row["day_of_week"]))
+        if d:
+            trend_by_day.setdefault(d, []).append({
+                "season": int(row["season"]),
+                "cap_util": float(row["cap_util"]),
+                "n_games": int(row["n"]),
+            })
+
+    return {"current": by_day, "trend_weekdays": trend_by_day}
 
 
 def load_rp_full_dow_profile() -> list[dict]:
@@ -291,15 +392,17 @@ def load_rp_full_dow_profile() -> list[dict]:
     return [{"day": d, **by_day[d]} for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
 
 
-def load_winning_team_dow_patterns() -> list[dict]:
-    """For top-cap-util teams across all MiLB (top quartile per level),
-    what share of their games on each day-of-week carry each promo type.
+def load_named_winning_teams_weekly() -> list[dict]:
+    """The actual 7-day pattern at named top-cohort teams.
 
-    Gives the LLM "this is what winning clubs do on each day" context that
-    isn't restricted to Double-A and isn't biased by branded-recurring
-    naming conventions.
+    Cohort: cap_util >= 0.65 in 2025, exclude Single-A. Returns up to 12
+    teams ordered by cap_util descending, with the dominant promo
+    category for each day-of-week (Mon-Sun).
+
+    "Dominant" = the highest-share category at that team's day, only kept
+    if it covers at least 50% of that day's home games.
     """
-    df = pd.read_sql(text("""
+    df = pd.read_sql(text(f"""
         WITH season_avg AS (
           SELECT team_id, sport_id, AVG(capacity_utilization) AS cap_util
             FROM milb.game_features
@@ -308,39 +411,166 @@ def load_winning_team_dow_patterns() -> list[dict]:
           HAVING COUNT(*) >= 50
         ),
         winners AS (
-          SELECT team_id FROM (
-            SELECT team_id, NTILE(4) OVER (PARTITION BY sport_id ORDER BY cap_util DESC) AS q
-              FROM season_avg
-          ) r WHERE q = 1
+          SELECT t.team_id, t.team_name, t.sport_id, sa.cap_util
+            FROM season_avg sa
+            JOIN milb.teams t ON t.team_id = sa.team_id
+           WHERE sa.cap_util >= 0.65
+             AND sa.sport_id IN (11, 12, 13)
+           ORDER BY sa.cap_util DESC
+           LIMIT 12
+        ),
+        per_day AS (
+          SELECT gf.team_id, gf.day_of_week,
+                 COUNT(*) AS n,
+                 AVG(CASE WHEN gf.has_fireworks   THEN 1.0 ELSE 0 END) AS fw,
+                 AVG(CASE WHEN gf.has_giveaway    THEN 1.0 ELSE 0 END) AS gv,
+                 AVG(CASE WHEN gf.has_kids_event  THEN 1.0 ELSE 0 END) AS kids,
+                 AVG(CASE WHEN gf.has_community   THEN 1.0 ELSE 0 END) AS comm,
+                 AVG(CASE WHEN gf.has_theme_night THEN 1.0 ELSE 0 END) AS theme
+            FROM milb.game_features gf
+            JOIN winners w ON w.team_id = gf.team_id
+           WHERE gf.season = 2025 AND gf.game_type = 'R'
+             AND gf.attendance IS NOT NULL
+           GROUP BY gf.team_id, gf.day_of_week
+        ),
+        deal_per_day AS (
+          SELECT g.home_team_id AS team_id,
+                 gf.day_of_week,
+                 {DEAL_TYPE_SQL} AS subtype,
+                 COUNT(*) AS n
+            FROM milb.game_promotions p
+            JOIN milb.games g ON g.game_pk = p.game_pk
+            JOIN milb.game_features gf ON gf.game_pk = g.game_pk
+            JOIN winners w ON w.team_id = g.home_team_id
+           WHERE p.is_recurring = TRUE
+             AND p.enrichment_method IS NOT NULL
+             AND g.season = 2025
+           GROUP BY g.home_team_id, gf.day_of_week,
+                    {DEAL_TYPE_SQL}
+        ),
+        deal_shares AS (
+          SELECT team_id, day_of_week,
+                 SUM(CASE WHEN subtype = 'alcohol' THEN n ELSE 0 END) AS alc_n,
+                 SUM(CASE WHEN subtype = 'food'    THEN n ELSE 0 END) AS food_n
+            FROM deal_per_day GROUP BY team_id, day_of_week
         )
-        SELECT gf.day_of_week,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_fireworks   THEN 1 ELSE 0 END), 0) AS fw_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_giveaway    THEN 1 ELSE 0 END), 0) AS gv_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_recurring   THEN 1 ELSE 0 END), 0) AS rec_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_food_deal   THEN 1 ELSE 0 END), 0) AS food_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_kids_event  THEN 1 ELSE 0 END), 0) AS kids_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_community   THEN 1 ELSE 0 END), 0) AS comm_pct,
-               ROUND(100.0 * AVG(CASE WHEN gf.has_theme_night THEN 1 ELSE 0 END), 0) AS theme_pct,
+        SELECT w.team_id, w.team_name, w.sport_id, w.cap_util,
+               pd.day_of_week, pd.n,
+               pd.fw, pd.gv, pd.kids, pd.comm, pd.theme,
+               COALESCE(ds.alc_n, 0)::float / NULLIF(pd.n, 0)  AS alcohol,
+               COALESCE(ds.food_n, 0)::float / NULLIF(pd.n, 0) AS food
+          FROM winners w
+          JOIN per_day pd ON pd.team_id = w.team_id
+          LEFT JOIN deal_shares ds
+                 ON ds.team_id = pd.team_id
+                AND ds.day_of_week = pd.day_of_week
+         ORDER BY w.cap_util DESC, pd.day_of_week
+    """), engine)
+    if df.empty:
+        return []
+
+    dow_label = {0:"Mon",1:"Tue",2:"Wed",3:"Thu",4:"Fri",5:"Sat",6:"Sun"}
+    sport_label = {11:"AAA",12:"AA",13:"A+"}
+
+    # Pick the dominant category per (team, day): highest-share category
+    # that covers at least 50% of that day's games.
+    def dominant(row) -> str:
+        candidates = [
+            ("fireworks", float(row.get("fw") or 0)),
+            ("giveaway",  float(row.get("gv") or 0)),
+            ("alcohol",   float(row.get("alcohol") or 0)),
+            ("food",      float(row.get("food") or 0)),
+            ("kids",      float(row.get("kids") or 0)),
+            ("community", float(row.get("comm") or 0)),
+            ("theme",     float(row.get("theme") or 0)),
+        ]
+        candidates.sort(key=lambda c: c[1], reverse=True)
+        top_name, top_share = candidates[0]
+        if top_share >= 0.5:
+            return top_name
+        return "-"
+
+    out: dict[int, dict] = {}
+    for _, row in df.iterrows():
+        tid = int(row["team_id"])
+        if tid not in out:
+            out[tid] = {
+                "team_name":  row["team_name"],
+                "sport":      sport_label.get(int(row["sport_id"]), "?"),
+                "cap_util":   round(float(row["cap_util"]), 2),
+                "by_day":     {d: "-" for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]},
+            }
+        d = dow_label.get(int(row["day_of_week"]))
+        if d:
+            out[tid]["by_day"][d] = dominant(row)
+    # Preserve cap_util descending order
+    return [out[tid] for tid in sorted(out, key=lambda t: -out[t]["cap_util"])]
+
+
+def load_winning_team_dow_patterns() -> list[dict]:
+    """For high-cap-util teams across MiLB (cap_util >= 0.65, exclude
+    Single-A), what share of their games on each day-of-week carry each
+    promo type. Splits alcohol from food using offer-name keywords so the
+    LLM can avoid recommending multiple alcohol nights per week.
+    """
+    df = pd.read_sql(text(f"""
+        WITH winners AS (
+          SELECT team_id FROM (
+            SELECT team_id, sport_id, AVG(capacity_utilization) AS cap
+              FROM milb.game_features
+             WHERE season = 2025 AND game_type = 'R' AND attendance IS NOT NULL
+             GROUP BY team_id, sport_id HAVING COUNT(*) >= 50
+          ) sa WHERE cap >= 0.65 AND sport_id IN (11, 12, 13)
+        ),
+        base AS (
+          SELECT gf.day_of_week, gf.game_pk,
+                 gf.has_fireworks, gf.has_giveaway, gf.has_recurring,
+                 gf.has_kids_event, gf.has_community, gf.has_theme_night
+            FROM milb.game_features gf
+            JOIN winners w ON w.team_id = gf.team_id
+           WHERE gf.season = 2025 AND gf.game_type = 'R'
+             AND gf.attendance IS NOT NULL
+        ),
+        deal_per_game AS (
+          SELECT g.game_pk,
+                 BOOL_OR(({DEAL_TYPE_SQL}) = 'alcohol') AS has_alcohol,
+                 BOOL_OR(({DEAL_TYPE_SQL}) = 'food')    AS has_food
+            FROM milb.game_promotions p
+            JOIN milb.games g ON g.game_pk = p.game_pk
+            JOIN winners w ON w.team_id = g.home_team_id
+           WHERE p.is_recurring = TRUE
+             AND p.enrichment_method IS NOT NULL
+             AND g.season = 2025
+           GROUP BY g.game_pk
+        )
+        SELECT b.day_of_week,
+               ROUND(100.0 * AVG(CASE WHEN b.has_fireworks   THEN 1.0 ELSE 0 END), 0) AS fw_pct,
+               ROUND(100.0 * AVG(CASE WHEN b.has_giveaway    THEN 1.0 ELSE 0 END), 0) AS gv_pct,
+               ROUND(100.0 * AVG(CASE WHEN b.has_recurring   THEN 1.0 ELSE 0 END), 0) AS rec_pct,
+               ROUND(100.0 * AVG(CASE WHEN COALESCE(d.has_alcohol, FALSE) THEN 1.0 ELSE 0 END), 0) AS alcohol_pct,
+               ROUND(100.0 * AVG(CASE WHEN COALESCE(d.has_food,    FALSE) THEN 1.0 ELSE 0 END), 0) AS food_pct,
+               ROUND(100.0 * AVG(CASE WHEN b.has_kids_event  THEN 1.0 ELSE 0 END), 0) AS kids_pct,
+               ROUND(100.0 * AVG(CASE WHEN b.has_community   THEN 1.0 ELSE 0 END), 0) AS comm_pct,
+               ROUND(100.0 * AVG(CASE WHEN b.has_theme_night THEN 1.0 ELSE 0 END), 0) AS theme_pct,
                COUNT(*) AS n
-          FROM milb.game_features gf
-          JOIN winners w ON w.team_id = gf.team_id
-         WHERE gf.season = 2025 AND gf.game_type = 'R' AND gf.attendance IS NOT NULL
-         GROUP BY gf.day_of_week
-         ORDER BY gf.day_of_week
+          FROM base b
+          LEFT JOIN deal_per_game d ON d.game_pk = b.game_pk
+         GROUP BY b.day_of_week
+         ORDER BY b.day_of_week
     """), engine)
     dow_to_label = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
     out = []
     for _, row in df.iterrows():
         label = dow_to_label.get(int(row["day_of_week"]))
         if not label or int(row["n"]) < 20:
-            # Skip Mondays / sparse days where the sample is too small to mean anything
             continue
         out.append({
             "day":           label,
             "fireworks_pct": int(row["fw_pct"]),
             "giveaway_pct":  int(row["gv_pct"]),
             "recurring_pct": int(row["rec_pct"]),
-            "food_drink_pct": int(row["food_pct"]),
+            "alcohol_pct":   int(row["alcohol_pct"]),
+            "food_pct":      int(row["food_pct"]),
             "kids_pct":      int(row["kids_pct"]),
             "community_pct": int(row["comm_pct"]),
             "theme_pct":     int(row["theme_pct"]),
@@ -401,6 +631,8 @@ def build_user_prompt(
     peers: list[dict],
     rp_dow: list[dict],
     winners_dow: list[dict],
+    rp_outcomes: dict,
+    winners_named: list[dict],
 ) -> str:
     # 1. A clean per-day picture of what RP is currently doing
     day_map = build_day_map(current)
@@ -448,37 +680,78 @@ def build_user_prompt(
         winners_lines.append(f"- {d}: " + (", ".join(breakdown) if breakdown else "no dominant format"))
     winners_state = "\n".join(winners_lines)
 
+    # RP outcome table (cap util by day, with the Tuesday decline trend)
+    cur = rp_outcomes.get("current", {})
+    rp_outcome_lines = []
+    for d in ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+        info = cur.get(d, {})
+        if info:
+            rp_outcome_lines.append(f"  - {d}: {info['cap_util']:.0%} cap util ({info['n_games']} games)")
+    rp_outcomes_text = "\n".join(rp_outcome_lines) if rp_outcome_lines else "  (no data)"
+    tue_trend = rp_outcomes.get("trend_weekdays", {}).get("Tue", [])
+    tue_trend_str = ", ".join(f"{r['season']}={r['cap_util']:.0%}" for r in tue_trend) or "(none)"
+
+    # Named winning teams' weekly structure (12 teams)
+    winners_table = []
+    for w in winners_named[:12]:
+        cells = [w["by_day"].get(d, "-") for d in ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]]
+        winners_table.append(
+            f"  - {w['team_name']} ({w['sport']}, {w['cap_util']:.0%} cap): "
+            + " | ".join(f"{d}={c}" for d, c in zip(["Mon","Tue","Wed","Thu","Fri","Sat","Sun"], cells))
+        )
+    winners_named_text = "\n".join(winners_table)
+
     return f"""TEAM: Binghamton Rumble Ponies (Double-A, NY)
 
 BINGHAMTON CURRENT STATE BY DAY OF WEEK (2025):
 {rp_state}
 
+BINGHAMTON ACTUAL OUTCOMES BY DAY (2025 capacity utilization):
+{rp_outcomes_text}
+
+BINGHAMTON TUESDAY TREND ACROSS SEASONS (cap util):
+  {tue_trend_str}
+
+The current Twofer Tuesday ritual has likely been in place for several
+years. Tuesday has been the team's worst day and is in steady decline.
+Format alone has not reversed the trend. Treat any Tuesday recommendation
+as a candidate test, not a guaranteed lift.
+
 KEY PRIOR FINDING (the Saturdays page) -- THESE ANSWERS ARE FIXED:
 Binghamton currently runs Fireworks on Friday and Giveaways on Saturday.
-A separate analysis on the same data showed that across teams where
-Saturday outdraws Friday, Fireworks lands on Saturday and the standard
-Giveaway lands on Friday. The recommendation is to swap the two.
+A separate analysis showed that teams where Saturday outdraws Friday put
+Fireworks on Saturday and Giveaways on Friday. Pensacola Blue Wahoos (AA,
+78% cap util) is the case-study peer: Giveaway Friday on 100% of games,
+Fireworks Saturday on 100% of games. The recommendation is to swap.
 
 You MUST return exactly these two entries for Friday and Saturday:
-
   - day Fri: status="change", category="giveaway",
     proposed_ritual="Giveaway night (moved from Saturday)",
     rationale references the Saturdays finding swap.
   - day Sat: status="change", category="fireworks",
     proposed_ritual="Fireworks night (moved from Friday)",
-    rationale references the Saturdays finding swap.
+    rationale references the Saturdays finding swap and Pensacola.
 
-Do not deviate on Friday or Saturday. Use your judgment only on Tue, Wed,
-Thu, and Sun.
+HOW HIGH-ATTENDANCE TEAMS STRUCTURE THEIR WEEK
+(top 12 teams by 2025 capacity utilization in AAA/AA/A+,
+"-" means no single category dominates that day for that team):
+{winners_named_text}
 
-WHAT HIGH-ATTENDANCE TEAMS DO ON EACH DAY
-(top quartile by capacity utilization across all of MiLB in 2025;
-share of their home games carrying each flag, only formats >= 25% shown):
-{winners_state}
+HARD CONSTRAINTS FROM THE DATA (do not violate):
+1. ONLY ONE ALCOHOL NIGHT PER WEEK. 22 of 25 winning teams run zero or
+   one alcohol-anchored night per week (Thirsty Thursday, Wine
+   Wednesday, $3 Thursday, Tito's, etc.). Recommending alcohol on two
+   different weeknights is not supported by what successful peers do.
+2. The alcohol night, when present, lands on THURSDAY at 8 of 12 top
+   teams. Tuesday alcohol is rare (only 2 of 25). The current Twofer
+   Tuesday at Binghamton is non-standard relative to the peer pattern.
+3. Tuesday at winners is food (Taco Tuesday-style), community
+   (Doggone Tuesday), or recurring varied (Titan Tuesday, Triple Play
+   Tuesday). It is NOT alcohol.
+4. Sunday is universally kids-anchored at winners. Binghamton already
+   matches.
 
-PEER RITUAL FAMILIES ACROSS DOUBLE-A IN 2025
-(only included for context; do not infer fireworks placement from this
-because branded recurring fireworks names are biased toward Friday):
+PEER RITUAL FAMILIES ACROSS DOUBLE-A IN 2025 (context only):
 {json.dumps(peers, indent=2)}
 
 YOUR TASK:
@@ -487,43 +760,35 @@ Return the 7-day JSON schedule.
 - Monday: status="off", category="rest", proposed_ritual=null,
   rationale="No home games scheduled."
 
-- Friday and Saturday: use the FIXED entries given above (the swap).
+- Friday and Saturday: use the FIXED swap entries described above.
 
-- For Tue, Wed, Thu, Sun: compare the Binghamton current state to what
-  the high-attendance cohort does on the same day. Pick the call that
-  best matches:
-    keep   -- the current placement already matches what peers do.
-    change -- the current placement diverges and a different format
-              would be a better fit. Propose the new format.
-    test   -- the day has no anchor format and peer data suggests a
-              clear category to try.
-    skip   -- the day genuinely should remain unbranded.
+- Tuesday: Twofer Tuesday is alcohol on a day where winners run food or
+  community. AND Tuesday is Binghamton's worst day with a multi-season
+  decline. Recommend "change". Propose a category-level move toward food
+  or community (e.g. "Family-friendly food deal", "Taco Tuesday", or
+  "Community spotlight Tuesday"). Note in the rationale that this is a
+  candidate test and is not guaranteed to reverse the decline.
 
-  Important constraints and observations:
-  * Tuesday at this team is already a drink ritual (Twofer Tuesday is
-    a two-for-one drink deal, not a ticket deal). High-attendance
-    teams also lean food/drink on Tuesday. Tuesday should be "keep".
-  * Wednesday at this team is We Care Wednesday (community / heritage).
-    High-attendance teams are balanced on Wednesday across community,
-    theme, recurring, and food/drink. Wednesday should be "keep".
-  * Thursday at this team is Throwback Thursday (theme). At high-
-    attendance teams, Thursday is dominated by food/drink at 51% of
-    games (much higher than theme at 35%). This is a meaningful
-    divergence. Recommend "change" on Thursday with a category-level
-    proposal for an adult food/drink format such as "Thirsty Thursday"
-    or "Adult food/drink night", noting that the existing Throwback
-    Thursday could co-exist or be reformatted.
-  * Sunday at high-attendance teams is dominated by kids and family
-    formats (about 60% kids). Binghamton already runs Family Funday,
-    Kids' Club Sundays, and Senior Sundays. Sunday should be "keep".
+- Wednesday: Binghamton's We Care Wednesday is community / heritage and
+  matches the diverse Wednesday pattern at winners. Recommend "keep".
 
-- Category-level proposals are encouraged. If you cannot confidently
-  name a specific ritual, use a short category-level description in
-  proposed_ritual (e.g. "Adult food/drink night" or "Community / heritage
-  feature").
+- Thursday: Binghamton has no anchor today. At winners, Thursday is the
+  ALCOHOL night (Thirsty Thursday or similar at 8 of 12 top teams).
+  Recommend "test" or "change" depending on whether you read Throwback
+  Thursday as already an anchor. Use category "food/drink" and propose
+  an adult drink ritual (e.g. "Thirsty Thursday").
+
+- Sunday: Kids-anchored. Binghamton's slate matches. Recommend "keep".
+
+REMINDERS:
 - Allowed category values exactly: "fireworks", "giveaway", "kids",
-  "family/community", "food/drink", "ticket deal", "theme", "rest".
-  Do not invent new categories.
+  "family/community", "alcohol", "food", "ticket deal", "theme", "rest".
+  Use "alcohol" for beer / wine / cocktail / pricing-deal drink nights.
+  Use "food" for taco / hot-dog / pizza / cheap-eats nights.
+  Do NOT use "food/drink" (legacy). Do NOT invent others.
+- Category-level proposals are encouraged; specific ritual names are
+  optional. When you cannot confidently name a ritual, use a short
+  category-level description in proposed_ritual.
 - Return only the JSON object specified in the system prompt; do not
   include a current_ritual field.
 """
@@ -588,12 +853,17 @@ def main() -> int:
     peers = load_peer_top_rituals()
     rp_dow = load_rp_full_dow_profile()
     winners_dow = load_winning_team_dow_patterns()
+    rp_outcomes = load_rp_dow_outcomes()
+    winners_named = load_named_winning_teams_weekly()
     console.print(
         f"  Current rituals: {len(current)}, peer families: {len(peers)}, "
-        f"rp dow rows: {len(rp_dow)}, winners dow rows: {len(winners_dow)}"
+        f"rp dow rows: {len(rp_dow)}, winners dow rows: {len(winners_dow)}, "
+        f"named winners: {len(winners_named)}"
     )
 
-    prompt = build_user_prompt(current, peers, rp_dow, winners_dow)
+    prompt = build_user_prompt(
+        current, peers, rp_dow, winners_dow, rp_outcomes, winners_named
+    )
 
     console.print(f"[cyan]Calling Ollama ({args.model})...[/cyan]")
     with httpx.Client() as client:
@@ -648,7 +918,13 @@ def main() -> int:
 
     allowed_categories = {
         "fireworks", "giveaway", "kids", "family/community",
-        "food/drink", "ticket deal", "theme", "rest",
+        "alcohol", "food", "ticket deal", "theme", "rest",
+    }
+    category_aliases = {
+        "food/drink": "food",
+        "drink":      "alcohol",
+        "community":  "family/community",
+        "recurring":  "theme",
     }
     allowed_statuses = {"off", "keep", "change", "test", "skip"}
 
@@ -659,7 +935,11 @@ def main() -> int:
         # Validate / coerce status and category
         if day_entry.get("status") not in allowed_statuses:
             day_entry["status"] = "skip"
-        if day_entry.get("category") not in allowed_categories:
+        cat = day_entry.get("category")
+        if cat in category_aliases:
+            cat = category_aliases[cat]
+            day_entry["category"] = cat
+        if cat not in allowed_categories:
             day_entry["category"] = "rest" if day_entry["status"] == "off" else "theme"
 
         if d == "Mon":
