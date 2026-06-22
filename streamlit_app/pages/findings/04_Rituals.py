@@ -1,39 +1,28 @@
 """Finding 4 -- Rituals.
 
-The recurring-promo finding.
+The recurring-promo finding, RP-anchored.
 
-What the data shows (2025 Double-A, 30 teams, 4,000+ home games):
-  1. Binghamton built a recurring-promo slate from scratch over two seasons.
-     0% of home games carried a recurring promo in 2023 and 2024;
-     25% did in 2025 and 31% so far in 2026. That is the second-highest rate
-     in the Double-A teams with comparable promo enrichment.
-  2. The slate Binghamton built leans toward kids and family audiences.
-     Twofer Tuesday, Throwback Thursday, We Care Wednesdays, Family Funday,
-     Kids' Club Sundays, Senior Sundays. Across all recurring promos
-     league-wide, 37% of Binghamton's carry a kids flag and 11% carry a
-     family/community flag. The Double-A peer average is 5% and 4%.
-  3. Peer Double-A recurring slates lean toward adult food and drink
-     formats. Thirsty Thursday, Wine Wednesday, Taco Tuesday, Three Dollar
-     Thursday, Trivia Tuesday. 63% of peer recurring promos carry a food
-     or drink flag vs 53% of Binghamton's.
+Honest framing notes (read before editing):
+  * Promo enrichment is only fully populated from 2025 onward. The MLB Stats
+    API does not expose offer-name data for prior seasons. The page does NOT
+    say "RP had no rituals in 2023 / 2024" because we do not know that. It
+    says: "as of 2025, RP runs a strong recurring slate."
+  * Same composition finding as before:
+      - RP recurring promos: 37% kids, 11% family/community, 53% food/drink
+      - Other Double-A:      5% kids,  4% family/community, 63% food/drink
+  * Same hedge: league-wide observational lift on weeknight recurring is
+    mixed (rescue-promo selection bias), so the page frames a pilot as the
+    only honest way to test the hypothesis.
 
-What that means for the page: this finding does not say Binghamton is doing
-the wrong thing. It says Binghamton has done one thing well and has not yet
-tried the other thing peers are doing. The recommendation is a pilot test,
-not a calendar overhaul, and the page is honest that league-wide observational
-data on weeknight recurring lift is mixed (likely selection bias from rescue-
-promo deployment patterns).
+Page sections (matches the 5-section arc the other findings use):
+  1. What we see (rank + coverage on the recurring dimension)
+  2. Why it matters (habit framing, weeknight opportunity)
+  3. What's behind it (composition mix + ritual-family comparison table)
+  4. What to do (strategic + tactical bullets + LLM proposed week)
+  5. See also
 
-No em dashes in this file -- the briefing book copy pass will polish all
-prose simultaneously in a follow-up.
-
-Structure (same arc as findings 1-3):
-  1. Headline + caption
-  2. What we see (two charts: rate over time, peer ranking)
-  3. Why it matters (habit framing, weeknight opportunity)
-  4. What's behind it (composition mix vs peers, named rituals)
-  5. What to do with this (pilot hypothesis, candidate formats)
-  6. See also
+No em dashes in this file. Briefing-book copy pass will polish all prose
+simultaneously in a follow-up.
 """
 
 # -- Path setup ---------------------------------------------------------------
@@ -41,9 +30,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+import json
+
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
 from utils.db import query_df
@@ -59,33 +49,74 @@ DOUBLE_A_SPORT_ID = 12
 RP_COLOR = "#b064a0"        # purple, matches RP across the briefing book
 PEER_COLOR = "#95a5a6"      # neutral grey for peer aggregates
 LEAGUE_COLOR = "#3a9bd5"    # blue accent for Double-A reference
+ACCENT_COLOR = "#d4572e"    # warm orange, used for RP highlight on the rank chart
 
 DOW_ORDER = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 DOW_MAP = {0: "Sun", 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat"}
 
+# Ritual-family classification. Collapses near-duplicate offer names like
+# "Thirsty Thursday", "Thirsty Thursday�", and "Thirsty Thursday presented by
+# Yuengling" into a single concept so the comparison table is readable.
+# Keep this list in sync with scripts/generate_ritual_schedule.py if a new
+# family is added.
+RITUAL_FAMILY_CASE = """
+  CASE
+    WHEN offer_name ILIKE 'thirsty thursday%' OR offer_name ILIKE '%thirsty thursday%' THEN 'Thirsty Thursday'
+    WHEN offer_name ILIKE 'three dollar thursday%' OR offer_name ILIKE '$3 thursday%' THEN '$3 Thursday'
+    WHEN offer_name ILIKE 'taco tuesday%' THEN 'Taco Tuesday'
+    WHEN offer_name ILIKE 'twofer tuesday%' OR offer_name ILIKE 'two-for-tuesday%' OR offer_name ILIKE '%two for tuesday%' THEN 'Twofer Tuesday'
+    WHEN offer_name ILIKE 'wine wednesday%' THEN 'Wine Wednesday'
+    WHEN offer_name ILIKE 'fryday%' THEN 'Fryday'
+    WHEN offer_name ILIKE 'trivia tuesday%' THEN 'Trivia Tuesday'
+    WHEN offer_name ILIKE '%kids club%' OR offer_name ILIKE 'kids%sunday%' OR offer_name ILIKE 'kids day%' THEN 'Kids Day / Club'
+    WHEN offer_name ILIKE '%family funday%' OR offer_name ILIKE 'family day%' THEN 'Family Funday'
+    WHEN offer_name ILIKE 'senior%' THEN 'Seniors Day'
+    WHEN offer_name ILIKE 'we care%' THEN 'We Care Wednesday'
+    WHEN offer_name ILIKE 'throwback%' THEN 'Throwback Thursday'
+    WHEN offer_name ILIKE 'sunday funday%' THEN 'Sunday Funday'
+    WHEN offer_name ILIKE 'fireworks%' THEN 'Fireworks Night'
+    WHEN offer_name ILIKE '%koozie%' THEN 'Koozie Klub'
+    WHEN offer_name ILIKE '%weenie%whiskey%' THEN 'Weenie & Whiskey'
+    ELSE NULL
+  END
+"""
+
 
 # -- Data loaders -------------------------------------------------------------
 
-def load_rp_recurring_by_season() -> pd.DataFrame:
-    """RP's share of home games with at least one recurring promo, by season.
+def load_rp_headline_metrics() -> dict:
+    """Three numbers for the headline tiles, all from 2025 (the first season
+    with complete promo enrichment).
 
-    Promo enrichment is only fully populated from 2025 onward, but the 2023
-    and 2024 zero values are real (those seasons had no recurring promos on
-    the offer schedule, not a data gap).
+    pct       -- share of home games carrying a recurring promo
+    n_games   -- total regular-season home games
+    n_dow     -- count of distinct days of week that hosted a recurring promo
     """
-    return query_df(f"""
-        SELECT g.season,
-               COUNT(*) FILTER (WHERE gf.has_recurring) AS games_with_recurring,
-               COUNT(*) AS total_games,
-               1.0 * COUNT(*) FILTER (WHERE gf.has_recurring) / NULLIF(COUNT(*), 0) AS pct
-          FROM milb.game_features gf
-          JOIN milb.games g ON g.game_pk = gf.game_pk
-         WHERE gf.team_id = {RUMBLE_PONIES_ID}
-           AND g.game_type = 'R'
-           AND gf.attendance IS NOT NULL
-         GROUP BY g.season
-         ORDER BY g.season
+    df = query_df(f"""
+        WITH games AS (
+          SELECT gf.game_pk, gf.has_recurring, gf.day_of_week
+            FROM milb.game_features gf
+            JOIN milb.games g ON g.game_pk = gf.game_pk
+           WHERE gf.team_id = {RUMBLE_PONIES_ID}
+             AND g.season = 2025
+             AND g.game_type = 'R'
+             AND gf.attendance IS NOT NULL
+        )
+        SELECT
+          1.0 * COUNT(*) FILTER (WHERE has_recurring) / NULLIF(COUNT(*), 0)
+            AS pct_recurring,
+          COUNT(*) AS n_games,
+          COUNT(DISTINCT day_of_week) FILTER (WHERE has_recurring) AS n_dow
+          FROM games
     """)
+    if df.empty:
+        return {"pct": 0.0, "n_games": 0, "n_dow": 0}
+    row = df.iloc[0]
+    return {
+        "pct": float(row["pct_recurring"] or 0),
+        "n_games": int(row["n_games"]),
+        "n_dow": int(row["n_dow"] or 0),
+    }
 
 
 def load_doublea_recurring_2025() -> pd.DataFrame:
@@ -107,6 +138,19 @@ def load_doublea_recurring_2025() -> pd.DataFrame:
         HAVING COUNT(*) >= 50
          ORDER BY pct DESC
     """)
+
+
+def load_rp_rank() -> dict:
+    """Return RP's rank and the total count of Double-A teams classified."""
+    df = load_doublea_recurring_2025()
+    if df.empty:
+        return {"rank": None, "total": 0}
+    df = df.reset_index(drop=True)
+    rp_rows = df.index[df["team_id"] == RUMBLE_PONIES_ID].tolist()
+    return {
+        "rank": (rp_rows[0] + 1) if rp_rows else None,
+        "total": len(df),
+    }
 
 
 def load_recurring_promo_mix() -> pd.DataFrame:
@@ -141,64 +185,117 @@ def load_recurring_promo_mix() -> pd.DataFrame:
     """)
 
 
-def load_rp_named_rituals() -> pd.DataFrame:
-    """The actual recurring promo names Binghamton has run in 2025 and 2026,
-    plus the day-of-week they typically land on.
+def load_ritual_family_landscape() -> pd.DataFrame:
+    """The ritual-family comparison table. One row per ritual family with how
+    many Double-A teams ran it in 2025 and whether RP was one of them.
+
+    Restricted to families that appeared at 2+ teams or showed up in RP's
+    slate so the table stays focused on patterns that are actually shared.
     """
     return query_df(f"""
-        SELECT p.offer_name,
-               COUNT(*) AS n_games,
-               MIN(g.season) AS first_season,
-               MODE() WITHIN GROUP (ORDER BY EXTRACT(DOW FROM g.game_date)) AS typical_dow
-          FROM milb.game_promotions p
-          JOIN milb.games g ON g.game_pk = p.game_pk
-         WHERE p.is_recurring = TRUE
-           AND p.enrichment_method IS NOT NULL
-           AND g.home_team_id = {RUMBLE_PONIES_ID}
-           AND g.season IN (2025, 2026)
-         GROUP BY p.offer_name
-        HAVING COUNT(*) >= 2
-         ORDER BY n_games DESC
+        WITH classified AS (
+          SELECT p.*, g.home_team_id, g.season,
+                 {RITUAL_FAMILY_CASE} AS ritual_family
+            FROM milb.game_promotions p
+            JOIN milb.games g ON g.game_pk = p.game_pk
+           WHERE p.is_recurring = TRUE
+             AND p.enrichment_method IS NOT NULL
+             AND g.sport_id = {DOUBLE_A_SPORT_ID}
+             AND g.season = 2025
+        ),
+        by_family AS (
+          SELECT ritual_family,
+                 COUNT(DISTINCT home_team_id) AS n_teams,
+                 COUNT(*) AS n_games,
+                 BOOL_OR(home_team_id = {RUMBLE_PONIES_ID}) AS rp_runs,
+                 MODE() WITHIN GROUP (ORDER BY EXTRACT(DOW FROM (
+                   SELECT game_date FROM milb.games WHERE game_pk = classified.game_pk
+                 ))) AS typical_dow_raw
+            FROM classified
+           WHERE ritual_family IS NOT NULL
+           GROUP BY ritual_family
+        )
+        SELECT ritual_family,
+               n_teams,
+               n_games,
+               rp_runs
+          FROM by_family
+         WHERE n_teams >= 2 OR rp_runs = TRUE
+         ORDER BY n_teams DESC, n_games DESC
     """)
 
 
-def load_peer_named_rituals() -> pd.DataFrame:
-    """Most-run recurring promos across Double-A peers (excluding Binghamton),
-    2025 only, where the same offer name ran at least 5 times for one team.
-    Used to anchor the "what peers run" section with concrete names.
+def load_ritual_family_typical_day() -> dict:
+    """Return {ritual_family: 'Tue'} mapping from the most common day-of-week
+    that ritual family runs on across Double-A. Done as a separate, simpler
+    query because MODE WITHIN GROUP nested with a CTE was awkward.
     """
-    return query_df(f"""
-        SELECT p.offer_name, t.team_name,
-               COUNT(*) AS n_games
-          FROM milb.game_promotions p
-          JOIN milb.games g ON g.game_pk = p.game_pk
-          JOIN milb.teams t ON t.team_id = g.home_team_id
-         WHERE p.is_recurring = TRUE
-           AND p.enrichment_method IS NOT NULL
-           AND g.sport_id = {DOUBLE_A_SPORT_ID}
-           AND g.season = 2025
-           AND g.home_team_id != {RUMBLE_PONIES_ID}
-           AND (p.is_food_deal OR p.is_theme_night OR p.is_ticket_deal)
-           AND NOT p.is_kids_event
-         GROUP BY p.offer_name, t.team_name
-        HAVING COUNT(*) >= 5
-         ORDER BY n_games DESC
-         LIMIT 12
+    df = query_df(f"""
+        WITH classified AS (
+          SELECT p.is_recurring, p.enrichment_method, g.home_team_id, g.game_date,
+                 {RITUAL_FAMILY_CASE} AS ritual_family
+            FROM milb.game_promotions p
+            JOIN milb.games g ON g.game_pk = p.game_pk
+           WHERE p.is_recurring = TRUE
+             AND p.enrichment_method IS NOT NULL
+             AND g.sport_id = {DOUBLE_A_SPORT_ID}
+             AND g.season = 2025
+        )
+        SELECT ritual_family,
+               MODE() WITHIN GROUP (ORDER BY EXTRACT(DOW FROM game_date)) AS dow_raw
+          FROM classified
+         WHERE ritual_family IS NOT NULL
+         GROUP BY ritual_family
     """)
+    if df.empty:
+        return {}
+    return {row["ritual_family"]: DOW_MAP.get(int(row["dow_raw"]), "")
+            for _, row in df.iterrows()}
+
+
+def load_llm_schedule() -> dict | None:
+    """Pull the LLM-proposed weekly ritual schedule if one has been generated.
+
+    Stored in milb.group_narratives with group_type='ritual_schedule',
+    group_key='binghamton'. Returns the parsed kpi_json (which holds the
+    schedule) or None if not generated yet.
+    """
+    df = query_df("""
+        SELECT narrative_text, kpi_json, llm_model, generated_at
+          FROM milb.group_narratives
+         WHERE group_type = 'ritual_schedule'
+           AND group_key = 'binghamton'
+         ORDER BY generated_at DESC
+         LIMIT 1
+    """)
+    if df.empty:
+        return None
+    row = df.iloc[0]
+    payload = row["kpi_json"]
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except (json.JSONDecodeError, TypeError):
+            payload = None
+    return {
+        "narrative": row.get("narrative_text"),
+        "schedule": payload,
+        "model": row.get("llm_model"),
+        "generated_at": row.get("generated_at"),
+    }
 
 
 # -- Render -------------------------------------------------------------------
 
 st.title("Rituals")
 st.markdown(
-    "### The recurring promo slate has been rebuilt from zero. "
-    "What it's missing now is who it speaks to."
+    "### The recurring promo slate is in place. The remaining gap is who it speaks to."
 )
 st.caption(
-    "Two seasons ago Binghamton had no weekly traditions on the schedule. "
-    "Today the calendar is dotted with them, and the team sits second among "
-    "Double-A peers on how many home games carry a recurring promo. The "
-    "remaining gap is in the mix, not the count."
+    "Binghamton runs a recurring promotion on roughly a quarter of home games "
+    "in 2025, the second-highest rate among Double-A teams in the data. The "
+    "composition leans toward kids and family audiences. Peer top performers "
+    "lean toward adult weeknight food and drink formats."
 )
 
 st.divider()
@@ -206,66 +303,69 @@ st.divider()
 # ─── Section 1: What we see ────────────────────────────────────────────────
 st.subheader("What we see")
 
-c1, c2 = st.columns([1, 1])
+metrics = load_rp_headline_metrics()
+rank_info = load_rp_rank()
 
-with c1:
-    st.markdown("**Recurring promos at Binghamton, by season**")
-    rp_season = load_rp_recurring_by_season()
-    if not rp_season.empty:
-        rp_season["season"] = rp_season["season"].astype(str)
-        rp_season["pct_display"] = (rp_season["pct"] * 100).round(0).astype(int)
-        fig = px.bar(
-            rp_season,
-            x="season", y="pct_display",
-            color_discrete_sequence=[RP_COLOR],
-            labels={"pct_display": "% of home games", "season": "Season"},
-            text=rp_season["pct_display"].astype(str) + "%",
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            yaxis_range=[0, 45],
-            yaxis_ticksuffix="%",
-            showlegend=False,
-            margin=dict(t=20, b=20),
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(
-            "Each bar: the share of regular-season home games that carried at "
-            "least one recurring promotion. Two seasons of zeros, then a step "
-            "change. 2026 is in-season (through June)."
-        )
+c1, c2, c3 = st.columns(3)
+c1.metric(
+    "Recurring promos in 2025",
+    f"{metrics['pct']*100:.0f}%",
+    f"of {metrics['n_games']} home games",
+)
+c2.metric(
+    "Rank in Double-A",
+    f"#{rank_info['rank']}" if rank_info["rank"] else "n/a",
+    f"of {rank_info['total']} teams" if rank_info["rank"] else None,
+)
+c3.metric(
+    "Days of the week with a ritual",
+    f"{metrics['n_dow']} of 7",
+    "Saturday locked for fireworks",
+)
 
-with c2:
-    st.markdown("**Where Binghamton ranks in Double-A, 2025**")
-    da = load_doublea_recurring_2025()
-    if not da.empty:
-        da = da.sort_values("pct", ascending=True).copy()
-        da["pct_display"] = (da["pct"] * 100).round(1)
-        da["is_rp"] = (da["team_id"] == RUMBLE_PONIES_ID)
-        da["color"] = da["is_rp"].map({True: RP_COLOR, False: PEER_COLOR})
+st.caption(
+    "Promotional data is only available from 2025 onward (MLB Stats API "
+    "limitation). The page does not infer what was on the schedule before "
+    "that. The numbers above describe the slate that is in place today."
+)
 
-        fig = px.bar(
-            da, y="team_name", x="pct_display",
-            orientation="h",
-            color="color", color_discrete_map="identity",
-            labels={"pct_display": "% of home games with a recurring promo",
-                    "team_name": ""},
-            text=da["pct_display"].round(0).astype(int).astype(str) + "%",
-        )
-        fig.update_traces(textposition="outside")
-        fig.update_layout(
-            xaxis_range=[0, 35],
-            xaxis_ticksuffix="%",
-            showlegend=False,
-            margin=dict(t=20, b=20),
-            height=420,
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(
-            "Each row: a Double-A team's 2025 recurring-promo rate. Binghamton "
-            "is highlighted. Restricted to teams with a full season of promo "
-            "enrichment available."
-        )
+st.markdown("**Where Binghamton ranks in Double-A, 2025**")
+
+da = load_doublea_recurring_2025()
+if not da.empty:
+    da = da.sort_values("pct", ascending=True).copy()
+    da["pct_display"] = (da["pct"] * 100).round(1)
+    da["is_rp"] = (da["team_id"] == RUMBLE_PONIES_ID)
+    da["color"] = da["is_rp"].map({True: ACCENT_COLOR, False: PEER_COLOR})
+    da["label_team"] = da.apply(
+        lambda r: f"\u2192  {r['team_name']}" if r["is_rp"] else r["team_name"],
+        axis=1,
+    )
+
+    fig = px.bar(
+        da, y="label_team", x="pct_display",
+        orientation="h",
+        color="color", color_discrete_map="identity",
+        labels={"pct_display": "% of home games with a recurring promo",
+                "label_team": ""},
+        text=da["pct_display"].round(0).astype(int).astype(str) + "%",
+    )
+    fig.update_traces(textposition="outside")
+    fig.update_layout(
+        xaxis_range=[0, max(35, da["pct_display"].max() + 8)],
+        xaxis_ticksuffix="%",
+        showlegend=False,
+        margin=dict(t=20, b=20, l=180),
+        height=max(720, 22 * len(da) + 60),
+    )
+    fig.update_yaxes(tickmode="linear", tickfont=dict(size=11))
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "Each row: a Double-A team's 2025 share of home games carrying at "
+        "least one recurring promo. Binghamton is marked with an arrow and "
+        "highlighted in orange. Restricted to teams with full-season promo "
+        "enrichment."
+    )
 
 st.divider()
 
@@ -281,11 +381,11 @@ st.markdown(
 )
 
 st.markdown(
-    "Binghamton has 60 to 70 home games each season. Roughly 40 of those "
-    "fall on a weeknight. If a single weeknight ritual lifted average "
-    "attendance on its day by 200 fans, across the 14 home games of that "
-    "day, that is 2,800 additional fans through the gate per season. At "
-    f"the report's $30 per fan composite estimate, that is roughly "
+    "Binghamton has roughly 65 home games each season, about 40 of them on "
+    "a weeknight. If a single weeknight ritual lifted average attendance "
+    "on its day by 200 fans across 14 home games of that day, that is "
+    "2,800 additional fans through the gate per season. At the report's "
+    f"$30 per fan composite estimate, that is roughly "
     f"**{format_dollars_short(2800 * REVENUE_PER_FAN_USD)} in revenue per "
     "season** from one slot."
 )
@@ -303,8 +403,8 @@ st.subheader("What's behind it")
 
 st.markdown(
     "Where Binghamton's recurring slate differs from the rest of Double-A "
-    "is in the composition. The same number of recurring promo nights, "
-    "but a different audience profile."
+    "is in the composition. The same coverage on the calendar, but a "
+    "different audience profile."
 )
 
 mix = load_recurring_promo_mix()
@@ -352,42 +452,30 @@ if not mix.empty:
         "where Binghamton diverges most from the peer set."
     )
 
-c1, c2 = st.columns(2)
+st.markdown("**Most common recurring rituals across Double-A, 2025**")
 
-with c1:
-    st.markdown("**The Binghamton recurring slate**")
-    rp_rituals = load_rp_named_rituals()
-    if not rp_rituals.empty:
-        rp_rituals["Day"] = rp_rituals["typical_dow"].astype(int).map(DOW_MAP)
-        rp_rituals = rp_rituals.rename(columns={
-            "offer_name": "Promotion",
-            "n_games": "Games run",
-            "first_season": "First season",
-        })
-        show = rp_rituals[["Promotion", "Day", "Games run", "First season"]]
-        st.dataframe(show, use_container_width=True, hide_index=True)
-        st.caption(
-            "Recurring promotions Binghamton has run at least twice across "
-            "2025 and 2026. The slate is family- and kid-anchored, with "
-            "Twofer Tuesday as the lone ticket-deal-style ritual."
-        )
+landscape = load_ritual_family_landscape()
+dow_lookup = load_ritual_family_typical_day()
 
-with c2:
-    st.markdown("**Examples of adult-oriented peer rituals**")
-    peer = load_peer_named_rituals()
-    if not peer.empty:
-        peer = peer.rename(columns={
-            "offer_name": "Promotion",
-            "team_name":  "Team",
-            "n_games":    "Games (2025)",
-        })
-        st.dataframe(peer.head(12), use_container_width=True, hide_index=True)
-        st.caption(
-            "Recurring promos that other Double-A teams ran at least five "
-            "times in 2025 and that target food, drink, or theme-night "
-            "formats. These are the kind of weekly habits Binghamton's "
-            "calendar does not yet carry."
-        )
+if not landscape.empty:
+    landscape["Ritual"] = landscape["ritual_family"]
+    landscape["Teams running it"] = (
+        landscape["n_teams"].astype(str) + " of " + str(rank_info["total"] or 30)
+    )
+    landscape["Binghamton runs it?"] = landscape["rp_runs"].map(
+        {True: "Yes", False: "No"}
+    )
+    landscape["Typical day"] = landscape["ritual_family"].map(dow_lookup).fillna("")
+
+    show = landscape[["Ritual", "Teams running it", "Binghamton runs it?", "Typical day"]]
+    st.dataframe(show, use_container_width=True, hide_index=True)
+    st.caption(
+        "Each row: one recurring ritual family with similar offer names "
+        "collapsed together (so all variants of Thirsty Thursday count "
+        "once). Sorted by how many Double-A teams have it on their 2025 "
+        "calendar. The top of the table shows the patterns Binghamton "
+        "does not currently run."
+    )
 
 st.divider()
 
@@ -431,6 +519,48 @@ st.markdown(
     "Binghamton gates is to run one and measure it against the same weeknight "
     "in the same month in prior seasons."
 )
+
+st.markdown("---")
+st.markdown("**A proposed weekly schedule for Binghamton (LLM-generated)**")
+
+llm = load_llm_schedule()
+if llm is None or not llm.get("schedule"):
+    st.info(
+        "No LLM-generated schedule has been produced yet. Run "
+        "`python scripts/generate_ritual_schedule.py` with Ollama running "
+        "to populate this section."
+    )
+else:
+    schedule = llm["schedule"]
+    days = schedule.get("days") if isinstance(schedule, dict) else None
+    if isinstance(schedule, list):
+        days = schedule
+    if days:
+        df_sched = pd.DataFrame(days)
+        # Ensure consistent column order if present
+        col_order = [c for c in ["day", "status", "current_ritual",
+                                 "proposed_ritual", "category", "rationale"]
+                     if c in df_sched.columns]
+        if col_order:
+            df_sched = df_sched[col_order]
+        df_sched = df_sched.rename(columns={
+            "day": "Day",
+            "status": "Status",
+            "current_ritual": "Current",
+            "proposed_ritual": "Proposed",
+            "category": "Category",
+            "rationale": "Rationale",
+        })
+        st.dataframe(df_sched, use_container_width=True, hide_index=True)
+    headline = schedule.get("headline") if isinstance(schedule, dict) else None
+    if headline:
+        st.caption(headline)
+    if llm.get("model"):
+        st.caption(
+            f"Generated by {llm['model']} on "
+            f"{llm['generated_at']:%Y-%m-%d} as a hypothesis. Saturday is "
+            "treated as locked (fireworks) and not subject to ritual swap."
+        )
 
 st.divider()
 
