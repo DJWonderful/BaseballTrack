@@ -33,6 +33,7 @@ NAV = {
         P("pages/findings/01_Saturdays.py",                 "Saturdays",              ":material/event:"),
         P("pages/findings/02_Sundays.py",                   "Sundays",                ":material/wb_sunny:"),
         P("pages/findings/03_The_League_Is_Shifting.py",    "The League is Shifting", ":material/trending_down:"),
+        P("pages/findings/04_Rituals.py",                   "Rituals",                ":material/repeat:"),
     ],
     "About": [
         P("pages/About_This_Report.py",                     "About This Report",      ":material/info:"),

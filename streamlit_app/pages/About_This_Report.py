@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import streamlit as st
 
+from utils.economics import REVENUE_PER_FAN_BREAKDOWN, REVENUE_PER_FAN_NOTE, REVENUE_PER_FAN_USD
 from utils.footer import render_footer
 
 st.set_page_config(page_title="About This Report", layout="wide")
@@ -118,6 +119,27 @@ st.markdown("""
   being a pattern without a proven cause.
 - **This is not sanctioned by any team.** Take it as a second opinion to
   cross-reference, not as a directive.
+""")
+
+st.divider()
+
+st.subheader("Dollar figures")
+
+st.markdown(f"""
+Some findings translate an attendance gap into a dollar figure. Every page
+that does this uses the same per-fan assumption so the numbers stay
+comparable across the report.
+
+**Working assumption: ${REVENUE_PER_FAN_USD} per fan.** A conservative
+composite covering ticket, concessions, parking, and souvenirs, roughly
+broken down as:
+
+- Ticket: ${REVENUE_PER_FAN_BREAKDOWN['ticket']}
+- Concessions: ${REVENUE_PER_FAN_BREAKDOWN['concessions']}
+- Parking: ${REVENUE_PER_FAN_BREAKDOWN['parking']}
+- Souvenirs: ${REVENUE_PER_FAN_BREAKDOWN['souvenirs']}
+
+{REVENUE_PER_FAN_NOTE}
 """)
 
 st.divider()
