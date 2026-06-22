@@ -24,6 +24,7 @@ import plotly.express as px
 import streamlit as st
 
 from utils.db import query_df
+from utils.economics import REVENUE_PER_FAN_USD, fans_to_dollars, format_dollars_short
 from utils.footer import render_footer
 from utils.theme import LEVEL_COLORS, MOMENTUM_COLORS
 
@@ -77,11 +78,46 @@ def load_rp_kpis() -> dict:
          GROUP BY day_of_week
     """)
     if not gap.empty:
-        fri = gap.loc[gap["day_of_week"] == 4, "avg_att"]
-        sat = gap.loc[gap["day_of_week"] == 5, "avg_att"]
-        out["sat_gap"] = float(sat.iloc[0] - fri.iloc[0]) if len(sat) and len(fri) else None
+        fri_row = gap.loc[gap["day_of_week"] == 4]
+        sat_row = gap.loc[gap["day_of_week"] == 5]
+        if not fri_row.empty and not sat_row.empty:
+            fri_avg = float(fri_row["avg_att"].iloc[0])
+            sat_avg = float(sat_row["avg_att"].iloc[0])
+            n_sat = int(sat_row["n"].iloc[0])
+            out["sat_gap"] = sat_avg - fri_avg
+            out["sat_annual_fans"] = (fri_avg - sat_avg) * n_sat
+        else:
+            out["sat_gap"] = None
+            out["sat_annual_fans"] = None
     else:
         out["sat_gap"] = None
+        out["sat_annual_fans"] = None
+
+    # 2b. Sunday gap vs Double-A average (2025) for the Sundays card
+    sun = query_df(f"""
+        WITH rp AS (
+          SELECT AVG(attendance) AS rp_avg, COUNT(*) AS n_sun
+            FROM milb.game_features
+           WHERE team_id = {RUMBLE_PONIES_ID}
+             AND season = 2025 AND day_of_week = 6
+             AND game_type = 'R' AND attendance IS NOT NULL
+        ),
+        da AS (
+          SELECT AVG(attendance) AS da_avg
+            FROM milb.game_features
+           WHERE sport_id = {DOUBLE_A_SPORT_ID}
+             AND season = 2025 AND day_of_week = 6
+             AND game_type = 'R' AND attendance IS NOT NULL
+        )
+        SELECT rp.rp_avg, rp.n_sun, da.da_avg FROM rp, da
+    """)
+    if not sun.empty and pd.notna(sun["rp_avg"].iloc[0]) and pd.notna(sun["da_avg"].iloc[0]):
+        rp_avg = float(sun["rp_avg"].iloc[0])
+        da_avg = float(sun["da_avg"].iloc[0])
+        n_sun = int(sun["n_sun"].iloc[0])
+        out["sun_annual_fans"] = (da_avg - rp_avg) * n_sun
+    else:
+        out["sun_annual_fans"] = None
 
     # 3. RP rank in Double-A by cap util (2025 last complete year)
     rank = query_df(f"""
@@ -252,7 +288,25 @@ st.divider()
 
 # ─── 4 finding-card teasers ────────────────────────────────────────────────
 st.markdown("#### The four findings, in order")
-st.caption("Click a card to read the page. Or use the sidebar on the left.")
+st.caption(
+    "Click a card to read the page. Or use the sidebar on the left. Dollar "
+    f"figures use a working assumption of ${REVENUE_PER_FAN_USD} per fan "
+    "(ticket + concessions + parking + souvenirs). See *About this report* "
+    "for the full breakdown."
+)
+
+# Pre-compute the dollar tags so each card has a one-line stake
+sat_dollars = (
+    f"~{format_dollars_short(fans_to_dollars(k['sat_annual_fans']))} / year"
+    if k.get("sat_annual_fans") else "—"
+)
+sun_dollars = (
+    f"~{format_dollars_short(fans_to_dollars(k['sun_annual_fans']))} / year"
+    if k.get("sun_annual_fans") else "—"
+)
+# Rituals: one successful weeknight ritual ≈ 200 fans × 14 games = 2,800 fans/yr
+# (matches the illustrative arithmetic on the Rituals page)
+ritual_dollars = f"~{format_dollars_short(fans_to_dollars(2800))} / year"
 
 f1, f2 = st.columns(2)
 with f1:
@@ -262,6 +316,12 @@ with f1:
             "Friday outdraws Saturday at home in Binghamton — every season "
             "since 2023. The data points to one cause."
         )
+        if k.get("sat_annual_fans"):
+            st.markdown(
+                f"**Potential upside: {sat_dollars}** if Saturday matched "
+                f"Friday (~{int(round(k['sat_annual_fans'])):,} more fans "
+                "through the gate)."
+            )
         st.page_link("pages/findings/01_Saturdays.py", label="Read →")
 
 with f2:
@@ -271,6 +331,12 @@ with f2:
             "Binghamton's Sunday attendance has fallen every year since 2023. "
             "The rest of Double-A has held steady."
         )
+        if k.get("sun_annual_fans"):
+            st.markdown(
+                f"**Potential upside: {sun_dollars}** if Sunday matched the "
+                f"Double-A average (~{int(round(k['sun_annual_fans'])):,} "
+                "more fans through the gate)."
+            )
         st.page_link("pages/findings/02_Sundays.py", label="Read →")
 
 f3, f4 = st.columns(2)
@@ -281,6 +347,10 @@ with f3:
             "Stepping back: across all of Minor League Baseball, Friday and "
             "Saturday are quietly losing their edge. Weekdays are holding up."
         )
+        st.markdown(
+            "*Context, not a dollar number.* This finding is about every team "
+            "in MiLB, and reframes how to think about findings 1 and 2."
+        )
         st.page_link("pages/findings/03_The_League_Is_Shifting.py", label="Read →")
 
 with f4:
@@ -290,6 +360,10 @@ with f4:
             "What weekly recurring promotions (\"Thirsty Thursday,\" \"Taco "
             "Tuesday,\" Family Sunday) look like at the best-drawing teams — "
             "and where Binghamton fits."
+        )
+        st.markdown(
+            f"**Potential upside: {ritual_dollars}** per successful new "
+            "weeknight ritual (~2,800 more fans across the season)."
         )
         st.page_link("pages/findings/04_Rituals.py", label="Read →")
 
