@@ -186,22 +186,41 @@ def load_recurring_promo_mix() -> pd.DataFrame:
 
 
 def load_ritual_family_landscape() -> pd.DataFrame:
-    """The ritual-family comparison table. One row per ritual family with how
-    many Double-A teams ran it in 2025 and whether RP was one of them.
+    """Comparison table of ritual families across HIGH-ATTENDANCE teams in
+    all of MiLB (top quartile capacity utilization per level, 2025).
 
-    Restricted to families that appeared at 2+ teams or showed up in RP's
-    slate so the table stays focused on patterns that are actually shared.
+    Broader than Double-A only so the table actually reflects what is
+    common at clubs that successfully fill seats. Fireworks Night is
+    excluded because branded "Fireworks Friday" recurring naming is biased
+    toward Friday and conflicts with the separate Saturdays finding which
+    derives fireworks placement from a different signal.
     """
     return query_df(f"""
-        WITH classified AS (
-          SELECT g.home_team_id, g.season,
+        WITH season_avg AS (
+          SELECT team_id, sport_id, AVG(capacity_utilization) AS cap_util
+            FROM milb.game_features
+           WHERE season = 2025 AND game_type = 'R'
+             AND attendance IS NOT NULL
+           GROUP BY team_id, sport_id
+          HAVING COUNT(*) >= 50
+        ),
+        winners AS (
+          SELECT team_id FROM (
+            SELECT team_id,
+                   NTILE(4) OVER (PARTITION BY sport_id ORDER BY cap_util DESC) AS q
+              FROM season_avg
+          ) r WHERE q = 1
+        ),
+        classified AS (
+          SELECT g.home_team_id,
                  {RITUAL_FAMILY_CASE} AS ritual_family
             FROM milb.game_promotions p
             JOIN milb.games g ON g.game_pk = p.game_pk
            WHERE p.is_recurring = TRUE
              AND p.enrichment_method IS NOT NULL
-             AND g.sport_id = {DOUBLE_A_SPORT_ID}
              AND g.season = 2025
+             AND (g.home_team_id IN (SELECT team_id FROM winners)
+                  OR g.home_team_id = {RUMBLE_PONIES_ID})
         )
         SELECT ritual_family,
                COUNT(DISTINCT home_team_id) AS n_teams,
@@ -209,6 +228,7 @@ def load_ritual_family_landscape() -> pd.DataFrame:
                BOOL_OR(home_team_id = {RUMBLE_PONIES_ID}) AS rp_runs
           FROM classified
          WHERE ritual_family IS NOT NULL
+           AND ritual_family != 'Fireworks Night'
          GROUP BY ritual_family
         HAVING COUNT(DISTINCT home_team_id) >= 2
             OR BOOL_OR(home_team_id = {RUMBLE_PONIES_ID})
@@ -218,22 +238,39 @@ def load_ritual_family_landscape() -> pd.DataFrame:
 
 def load_ritual_family_typical_day() -> dict:
     """Return {ritual_family: 'Tue'} mapping from the most common day-of-week
-    that ritual family runs on across Double-A.
+    that ritual family runs on across the same high-attendance cohort as
+    load_ritual_family_landscape.
 
     Implemented with ROW_NUMBER instead of MODE() WITHIN GROUP because the
     DuckDB build used on Streamlit Cloud is not consistent across versions
     on ordered-set aggregates.
     """
     df = query_df(f"""
-        WITH classified AS (
+        WITH season_avg AS (
+          SELECT team_id, sport_id, AVG(capacity_utilization) AS cap_util
+            FROM milb.game_features
+           WHERE season = 2025 AND game_type = 'R'
+             AND attendance IS NOT NULL
+           GROUP BY team_id, sport_id
+          HAVING COUNT(*) >= 50
+        ),
+        winners AS (
+          SELECT team_id FROM (
+            SELECT team_id,
+                   NTILE(4) OVER (PARTITION BY sport_id ORDER BY cap_util DESC) AS q
+              FROM season_avg
+          ) r WHERE q = 1
+        ),
+        classified AS (
           SELECT g.game_date,
                  {RITUAL_FAMILY_CASE} AS ritual_family
             FROM milb.game_promotions p
             JOIN milb.games g ON g.game_pk = p.game_pk
            WHERE p.is_recurring = TRUE
              AND p.enrichment_method IS NOT NULL
-             AND g.sport_id = {DOUBLE_A_SPORT_ID}
              AND g.season = 2025
+             AND (g.home_team_id IN (SELECT team_id FROM winners)
+                  OR g.home_team_id = {RUMBLE_PONIES_ID})
         ),
         per_dow AS (
           SELECT ritual_family,
@@ -241,6 +278,7 @@ def load_ritual_family_typical_day() -> dict:
                  COUNT(*) AS n
             FROM classified
            WHERE ritual_family IS NOT NULL
+             AND ritual_family != 'Fireworks Night'
            GROUP BY ritual_family, CAST(EXTRACT(DOW FROM game_date) AS INTEGER)
         ),
         ranked AS (
@@ -460,16 +498,14 @@ if not mix.empty:
         "where Binghamton diverges most from the peer set."
     )
 
-st.markdown("**Most common recurring rituals across Double-A, 2025**")
+st.markdown("**Most common recurring rituals at high-attendance MiLB teams, 2025**")
 
 landscape = load_ritual_family_landscape()
 dow_lookup = load_ritual_family_typical_day()
 
 if not landscape.empty:
     landscape["Ritual"] = landscape["ritual_family"]
-    landscape["Teams running it"] = (
-        landscape["n_teams"].astype(str) + " of " + str(rank_info["total"] or 30)
-    )
+    landscape["Teams running it"] = landscape["n_teams"].astype(str)
     landscape["Binghamton runs it?"] = landscape["rp_runs"].map(
         {True: "Yes", False: "No"}
     )
@@ -478,11 +514,13 @@ if not landscape.empty:
     show = landscape[["Ritual", "Teams running it", "Binghamton runs it?", "Typical day"]]
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.caption(
-        "Each row: one recurring ritual family with similar offer names "
-        "collapsed together (so all variants of Thirsty Thursday count "
-        "once). Sorted by how many Double-A teams have it on their 2025 "
-        "calendar. The top of the table shows the patterns Binghamton "
-        "does not currently run."
+        "Cohort: every MiLB team in the top quartile of capacity "
+        "utilization for its level in 2025, plus Binghamton. Each row is "
+        "one recurring ritual family with similar offer names collapsed "
+        "together (so Thirsty Thursday, $3 Thursday and their branded "
+        "variants count once). Fireworks Night is intentionally excluded "
+        "because the recurring-promo data labels fireworks unevenly across "
+        "teams; the right place for that analysis is the Saturdays page."
     )
 
 st.divider()
@@ -566,8 +604,12 @@ else:
     if llm.get("model"):
         st.caption(
             f"Generated by {llm['model']} on "
-            f"{llm['generated_at']:%Y-%m-%d} as a hypothesis. Saturday is "
-            "treated as locked (fireworks) and not subject to ritual swap."
+            f"{llm['generated_at']:%Y-%m-%d} as a hypothesis. "
+            "Status legend: off = no home games scheduled, keep = current "
+            "placement matches what successful peers do, change = current "
+            "placement diverges from the peer pattern, test = day has no "
+            "anchor format and a pilot is proposed, skip = day should "
+            "remain unbranded."
         )
 
 st.divider()

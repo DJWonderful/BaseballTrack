@@ -92,33 +92,38 @@ RITUAL_FAMILY_CASE = """
 """
 
 
-SYSTEM_PROMPT = """You are a Minor League Baseball promotions consultant writing a briefing for a team's front office. The user gives you a day-by-day picture of what is already on the team's weekly schedule. Your job is to recommend, per day, whether to keep what is there, pilot something new, or stay quiet.
+SYSTEM_PROMPT = """You are a Minor League Baseball promotions consultant writing a briefing for the front office of one specific team. The user gives you that team's full weekly promo placement, plus what high-attendance teams across MiLB do on each day. Your job is to recommend, per day, whether to keep what is there, change the placement, pilot something new, or stay quiet.
 
 You MUST return ONLY a single JSON object with this shape:
 
 {
-  "headline": "one-sentence summary of the schedule's intent (under 30 words)",
+  "headline": "one-sentence summary of the schedule's overall intent (under 30 words)",
   "days": [
     {
       "day": "Mon" | "Tue" | "Wed" | "Thu" | "Fri" | "Sat" | "Sun",
-      "status": "keep" | "test" | "skip",
-      "proposed_ritual": proposed new ritual name or null,
-      "category": "kids" | "family/community" | "food/drink" | "ticket deal" | "theme" | "fireworks" | "rest",
-      "rationale": "one short sentence under 25 words"
+      "status": "off" | "keep" | "change" | "test" | "skip",
+      "proposed_ritual": proposed ritual name or null,
+      "category": "fireworks" | "giveaway" | "kids" | "family/community" | "food/drink" | "ticket deal" | "theme" | "rest",
+      "rationale": "one short sentence under 30 words explaining the call"
     }
   ]
 }
 
+Status definitions:
+- "off"    : The team does not schedule home games on this day. Reserved for Monday at this team.
+- "keep"   : The day already has a working format that matches what successful peers do; no change.
+- "change" : The day has something today, but successful peers anchor it with a different format. Propose what the day should become.
+- "test"   : The day currently has no anchor format; propose a category-level pilot for what to try.
+- "skip"   : The day should remain unbranded. Used sparingly and only with a clear reason.
+
 Rules:
-- Return exactly 7 day entries, in order Mon, Tue, Wed, Thu, Fri, Sat, Sun.
-- DO NOT include a "current_ritual" field. The reader will be shown what is currently on each day from the data; you do not need to repeat it.
-- Saturday is LOCKED. Always return: status="keep", category="fireworks", proposed_ritual=null, rationale referencing fireworks.
-- Use "keep" when the day already has a working ritual and you do not propose to change anything.
-- Use "test" only on the ONE day where you are proposing a new pilot ritual. Set proposed_ritual to the suggested name (a short branded name, e.g. "Thirsty Thursday" or "Trivia Tuesday"). Set category to one of the allowed values. Set proposed_ritual=null on every other day.
-- Use "skip" when the day should remain unbranded with no recurring promo, and explain in one sentence why.
-- The biggest gap in the team's current slate is adult weeknight food and drink formats. Favor Tuesday, Wednesday, or Thursday for that kind of pilot.
-- Recommend AT MOST ONE pilot ritual across the entire week. Habit takes a season to build; asking the front office to launch multiple new programs in one year is not realistic.
-- Be honest about uncertainty. Use phrases like "worth piloting" or "candidate test" in the rationale. Avoid imperatives like "must" or "should immediately".
+- Return exactly 7 day entries in order Mon, Tue, Wed, Thu, Fri, Sat, Sun.
+- DO NOT include a "current_ritual" field. The reader sees that separately from the data; you do not need to repeat it.
+- Monday: this specific team plays no home games on Monday. Always return status="off", category="rest", proposed_ritual=null.
+- "proposed_ritual" can be either a specific named ritual (e.g. "Thirsty Thursday") OR a category-level description (e.g. "Adult food/drink night" or "Theme/heritage night"). When you are not confident in a specific name, prefer the category-level description.
+- The user will give you a Saturday recommendation grounded in a separate prior finding (the Saturdays page). Treat that recommendation as the right answer for Saturday and Friday: status="change" on both, with the format swap explained.
+- For other days, look at what high-attendance teams do on that day-of-week vs what this team is doing. If the placement diverges meaningfully and the data points to a better format, recommend change.
+- Be honest about uncertainty. Use language like "worth piloting" or "candidate test" or "in line with what peers do". Avoid imperatives like "must" or "should immediately".
 - Do NOT mention machine learning, XGBoost, SHAP, OLS, or any model internals.
 - Do NOT name any individual person.
 - Return ONLY the JSON object. No commentary, no markdown fences."""
@@ -143,7 +148,7 @@ def check_ollama(model: str) -> bool:
 
 
 def call_ollama(client: httpx.Client, user_content: str, model: str) -> dict | None:
-    options = {"temperature": 0.3, "num_predict": 4096, "num_ctx": 8192}
+    options = {"temperature": 0.3, "num_predict": 8192, "num_ctx": 12288}
     if "qwen3" in model:
         options["think"] = False
     payload = {
@@ -212,19 +217,136 @@ def load_rp_current_rituals() -> list[dict]:
             "name":     row["offer_name"],
             "day":      DOW_FROM_INT.get(int(row["dow_raw"]), ""),
             "n_games":  int(row["n_games"]),
-            "category": _categorize(row),
+            "category": _categorize(row, row["offer_name"]),
         }
         for _, row in df.iterrows()
     ]
 
 
-def _categorize(row) -> str:
+# Offer-name keywords that override the LLM-enriched flag categorization.
+# Many "two-for-one" drink rituals get tagged is_ticket_deal=TRUE by the
+# enrichment pipeline because the deal mechanic looks like a ticket promo;
+# the actual product is drinks, so this should land as food/drink.
+DRINK_KEYWORDS = ("twofer", "two-for", "two for", "thirsty", "wine wednesday",
+                  "taco tuesday", "fryday", "weenie")
+
+
+def _categorize(row, name: str = "") -> str:
+    name_l = (name or "").lower()
+    if any(k in name_l for k in DRINK_KEYWORDS):
+        return "food/drink"
     if row.get("is_kids"):       return "kids"
     if row.get("is_family"):     return "family/community"
     if row.get("is_food_drink"): return "food/drink"
     if row.get("is_ticket"):     return "ticket deal"
     if row.get("is_theme"):      return "theme"
     return "other"
+
+
+def load_rp_full_dow_profile() -> list[dict]:
+    """Binghamton's actual 2025 promo placement by day of week.
+
+    This is the full picture, not just recurring promos. Tells the LLM
+    where fireworks, giveaways, and food/drink deals currently land so it
+    can recommend "change" status on days where the placement does not
+    match what successful teams do.
+
+    Uses game_features.day_of_week (Mon=0..Sun=6).
+    """
+    df = pd.read_sql(text(f"""
+        SELECT day_of_week,
+               COUNT(*) AS n_games,
+               SUM(CASE WHEN has_fireworks   THEN 1 ELSE 0 END) AS n_fireworks,
+               SUM(CASE WHEN has_giveaway    THEN 1 ELSE 0 END) AS n_giveaways,
+               SUM(CASE WHEN has_recurring   THEN 1 ELSE 0 END) AS n_recurring,
+               SUM(CASE WHEN has_food_deal   THEN 1 ELSE 0 END) AS n_food_drink,
+               SUM(CASE WHEN has_kids_event  THEN 1 ELSE 0 END) AS n_kids,
+               SUM(CASE WHEN has_community   THEN 1 ELSE 0 END) AS n_community,
+               SUM(CASE WHEN has_theme_night THEN 1 ELSE 0 END) AS n_theme
+          FROM milb.game_features
+         WHERE team_id = {BINGHAMTON_ID}
+           AND season = 2025
+           AND game_type = 'R'
+           AND attendance IS NOT NULL
+         GROUP BY day_of_week
+         ORDER BY day_of_week
+    """), engine)
+    dow_to_label = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    by_day = {label: {"n_games": 0} for label in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]}
+    for _, row in df.iterrows():
+        label = dow_to_label.get(int(row["day_of_week"]))
+        if not label:
+            continue
+        n = int(row["n_games"]) or 1
+        by_day[label] = {
+            "n_games":     int(row["n_games"]),
+            "fireworks":   f"{int(row['n_fireworks'])}/{int(row['n_games'])}",
+            "giveaways":   f"{int(row['n_giveaways'])}/{int(row['n_games'])}",
+            "recurring":   f"{int(row['n_recurring'])}/{int(row['n_games'])}",
+            "food_drink":  f"{int(row['n_food_drink'])}/{int(row['n_games'])}",
+            "kids":        f"{int(row['n_kids'])}/{int(row['n_games'])}",
+            "community":   f"{int(row['n_community'])}/{int(row['n_games'])}",
+            "theme":       f"{int(row['n_theme'])}/{int(row['n_games'])}",
+        }
+    return [{"day": d, **by_day[d]} for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]]
+
+
+def load_winning_team_dow_patterns() -> list[dict]:
+    """For top-cap-util teams across all MiLB (top quartile per level),
+    what share of their games on each day-of-week carry each promo type.
+
+    Gives the LLM "this is what winning clubs do on each day" context that
+    isn't restricted to Double-A and isn't biased by branded-recurring
+    naming conventions.
+    """
+    df = pd.read_sql(text("""
+        WITH season_avg AS (
+          SELECT team_id, sport_id, AVG(capacity_utilization) AS cap_util
+            FROM milb.game_features
+           WHERE season = 2025 AND game_type = 'R' AND attendance IS NOT NULL
+           GROUP BY team_id, sport_id
+          HAVING COUNT(*) >= 50
+        ),
+        winners AS (
+          SELECT team_id FROM (
+            SELECT team_id, NTILE(4) OVER (PARTITION BY sport_id ORDER BY cap_util DESC) AS q
+              FROM season_avg
+          ) r WHERE q = 1
+        )
+        SELECT gf.day_of_week,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_fireworks   THEN 1 ELSE 0 END), 0) AS fw_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_giveaway    THEN 1 ELSE 0 END), 0) AS gv_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_recurring   THEN 1 ELSE 0 END), 0) AS rec_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_food_deal   THEN 1 ELSE 0 END), 0) AS food_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_kids_event  THEN 1 ELSE 0 END), 0) AS kids_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_community   THEN 1 ELSE 0 END), 0) AS comm_pct,
+               ROUND(100.0 * AVG(CASE WHEN gf.has_theme_night THEN 1 ELSE 0 END), 0) AS theme_pct,
+               COUNT(*) AS n
+          FROM milb.game_features gf
+          JOIN winners w ON w.team_id = gf.team_id
+         WHERE gf.season = 2025 AND gf.game_type = 'R' AND gf.attendance IS NOT NULL
+         GROUP BY gf.day_of_week
+         ORDER BY gf.day_of_week
+    """), engine)
+    dow_to_label = {0: "Mon", 1: "Tue", 2: "Wed", 3: "Thu", 4: "Fri", 5: "Sat", 6: "Sun"}
+    out = []
+    for _, row in df.iterrows():
+        label = dow_to_label.get(int(row["day_of_week"]))
+        if not label or int(row["n"]) < 20:
+            # Skip Mondays / sparse days where the sample is too small to mean anything
+            continue
+        out.append({
+            "day":           label,
+            "fireworks_pct": int(row["fw_pct"]),
+            "giveaway_pct":  int(row["gv_pct"]),
+            "recurring_pct": int(row["rec_pct"]),
+            "food_drink_pct": int(row["food_pct"]),
+            "kids_pct":      int(row["kids_pct"]),
+            "community_pct": int(row["comm_pct"]),
+            "theme_pct":     int(row["theme_pct"]),
+            "n_games":       int(row["n"]),
+        })
+    return out
 
 
 def load_peer_top_rituals() -> list[dict]:
@@ -274,43 +396,136 @@ def build_day_map(current: list[dict]) -> dict[str, list[str]]:
     return by_day
 
 
-def build_user_prompt(current: list[dict], peers: list[dict]) -> str:
+def build_user_prompt(
+    current: list[dict],
+    peers: list[dict],
+    rp_dow: list[dict],
+    winners_dow: list[dict],
+) -> str:
+    # 1. A clean per-day picture of what RP is currently doing
     day_map = build_day_map(current)
-    day_state_lines = []
+    rp_dow_by_day = {d["day"]: d for d in rp_dow}
+    winners_by_day = {d["day"]: d for d in winners_dow}
+
+    rp_state_lines = []
     for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
-        if d == "Sat":
-            day_state_lines.append(f"- {d}: LOCKED to Fireworks (do not change).")
+        if d == "Mon":
+            rp_state_lines.append(f"- Mon: NO home games scheduled (team convention).")
             continue
-        names = day_map.get(d, [])
-        if names:
-            day_state_lines.append(f"- {d}: currently runs {', '.join(names)}.")
-        else:
-            day_state_lines.append(f"- {d}: no current recurring ritual.")
-    day_state = "\n".join(day_state_lines)
+        rp_day = rp_dow_by_day.get(d, {})
+        n = rp_day.get("n_games", 0)
+        ritual_names = day_map.get(d, [])
+        pieces = []
+        if ritual_names:
+            pieces.append("recurring ritual: " + ", ".join(ritual_names))
+        # Show what the day's promo placement looks like
+        for label, key in [("fireworks", "fireworks"), ("giveaway", "giveaways"),
+                           ("food/drink", "food_drink"), ("kids", "kids"),
+                           ("community", "community"), ("theme", "theme")]:
+            val = rp_day.get(key)
+            if val and val != f"0/{n}":
+                pieces.append(f"{label} on {val} of games")
+        if not pieces:
+            pieces.append("no anchor format")
+        rp_state_lines.append(f"- {d}: {'; '.join(pieces)} ({n} home games).")
+    rp_state = "\n".join(rp_state_lines)
+
+    # 2. Winning-team patterns by day (what % of high-attendance team games carry each flag)
+    winners_lines = []
+    for d in ["Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+        wd = winners_by_day.get(d)
+        if not wd:
+            continue
+        # Highlight the dominant format(s) for the day
+        breakdown = []
+        for label, key in [("fireworks", "fireworks_pct"), ("giveaway", "giveaway_pct"),
+                           ("food/drink", "food_drink_pct"), ("kids", "kids_pct"),
+                           ("community", "community_pct"), ("theme", "theme_pct"),
+                           ("recurring", "recurring_pct")]:
+            pct = wd.get(key, 0)
+            if pct >= 25:
+                breakdown.append(f"{label} {pct}%")
+        winners_lines.append(f"- {d}: " + (", ".join(breakdown) if breakdown else "no dominant format"))
+    winners_state = "\n".join(winners_lines)
 
     return f"""TEAM: Binghamton Rumble Ponies (Double-A, NY)
 
-CURRENT STATE BY DAY OF WEEK (2025 and 2026 combined):
-{day_state}
+BINGHAMTON CURRENT STATE BY DAY OF WEEK (2025):
+{rp_state}
+
+KEY PRIOR FINDING (the Saturdays page) -- THESE ANSWERS ARE FIXED:
+Binghamton currently runs Fireworks on Friday and Giveaways on Saturday.
+A separate analysis on the same data showed that across teams where
+Saturday outdraws Friday, Fireworks lands on Saturday and the standard
+Giveaway lands on Friday. The recommendation is to swap the two.
+
+You MUST return exactly these two entries for Friday and Saturday:
+
+  - day Fri: status="change", category="giveaway",
+    proposed_ritual="Giveaway night (moved from Saturday)",
+    rationale references the Saturdays finding swap.
+  - day Sat: status="change", category="fireworks",
+    proposed_ritual="Fireworks night (moved from Friday)",
+    rationale references the Saturdays finding swap.
+
+Do not deviate on Friday or Saturday. Use your judgment only on Tue, Wed,
+Thu, and Sun.
+
+WHAT HIGH-ATTENDANCE TEAMS DO ON EACH DAY
+(top quartile by capacity utilization across all of MiLB in 2025;
+share of their home games carrying each flag, only formats >= 25% shown):
+{winners_state}
 
 PEER RITUAL FAMILIES ACROSS DOUBLE-A IN 2025
-(ordered by number of teams running each, with whether Binghamton runs it):
+(only included for context; do not infer fireworks placement from this
+because branded recurring fireworks names are biased toward Friday):
 {json.dumps(peers, indent=2)}
 
-KEY OBSERVATION:
-The current slate covers most days with kids, family, and ticket-deal
-formats. The biggest gap is adult-oriented weeknight food or drink, the
-kind of weekly habit other Double-A clubs use to anchor Tuesday,
-Wednesday, or Thursday gates. Thirsty Thursday alone runs at 13 of about
-30 Double-A teams; Binghamton does not run an equivalent.
-
 YOUR TASK:
-Return the 7-day JSON schedule. Use "keep" on days that already run a
-ritual unless you have a clear reason to recommend otherwise. Use "test"
-on AT MOST ONE day to propose a new pilot ritual targeting the
-adult-weeknight gap. Use "skip" for days that should remain unbranded.
-Saturday is locked. Return only the JSON object specified in the system
-prompt; do not include a current_ritual field.
+Return the 7-day JSON schedule.
+
+- Monday: status="off", category="rest", proposed_ritual=null,
+  rationale="No home games scheduled."
+
+- Friday and Saturday: use the FIXED entries given above (the swap).
+
+- For Tue, Wed, Thu, Sun: compare the Binghamton current state to what
+  the high-attendance cohort does on the same day. Pick the call that
+  best matches:
+    keep   -- the current placement already matches what peers do.
+    change -- the current placement diverges and a different format
+              would be a better fit. Propose the new format.
+    test   -- the day has no anchor format and peer data suggests a
+              clear category to try.
+    skip   -- the day genuinely should remain unbranded.
+
+  Important constraints and observations:
+  * Tuesday at this team is already a drink ritual (Twofer Tuesday is
+    a two-for-one drink deal, not a ticket deal). High-attendance
+    teams also lean food/drink on Tuesday. Tuesday should be "keep".
+  * Wednesday at this team is We Care Wednesday (community / heritage).
+    High-attendance teams are balanced on Wednesday across community,
+    theme, recurring, and food/drink. Wednesday should be "keep".
+  * Thursday at this team is Throwback Thursday (theme). At high-
+    attendance teams, Thursday is dominated by food/drink at 51% of
+    games (much higher than theme at 35%). This is a meaningful
+    divergence. Recommend "change" on Thursday with a category-level
+    proposal for an adult food/drink format such as "Thirsty Thursday"
+    or "Adult food/drink night", noting that the existing Throwback
+    Thursday could co-exist or be reformatted.
+  * Sunday at high-attendance teams is dominated by kids and family
+    formats (about 60% kids). Binghamton already runs Family Funday,
+    Kids' Club Sundays, and Senior Sundays. Sunday should be "keep".
+
+- Category-level proposals are encouraged. If you cannot confidently
+  name a specific ritual, use a short category-level description in
+  proposed_ritual (e.g. "Adult food/drink night" or "Community / heritage
+  feature").
+- Allowed category values exactly: "fireworks", "giveaway", "kids",
+  "family/community", "food/drink", "ticket deal", "theme", "rest".
+  Do not invent new categories.
+- Return only the JSON object specified in the system prompt; do not
+  include a current_ritual field.
 """
 
 
@@ -371,9 +586,14 @@ def main() -> int:
     console.print("[cyan]Loading Binghamton ritual context...[/cyan]")
     current = load_rp_current_rituals()
     peers = load_peer_top_rituals()
-    console.print(f"  Current rituals: {len(current)}, peer families: {len(peers)}")
+    rp_dow = load_rp_full_dow_profile()
+    winners_dow = load_winning_team_dow_patterns()
+    console.print(
+        f"  Current rituals: {len(current)}, peer families: {len(peers)}, "
+        f"rp dow rows: {len(rp_dow)}, winners dow rows: {len(winners_dow)}"
+    )
 
-    prompt = build_user_prompt(current, peers)
+    prompt = build_user_prompt(current, peers, rp_dow, winners_dow)
 
     console.print(f"[cyan]Calling Ollama ({args.model})...[/cyan]")
     with httpx.Client() as client:
@@ -392,11 +612,15 @@ def main() -> int:
     # creative recommendations and bad at bookkeeping; this guarantees we
     # never display a misplaced existing ritual name on the page.
     day_map = build_day_map(current)
-    for day_entry in days:
-        d = day_entry.get("day")
-        names = day_map.get(d, []) if isinstance(d, str) else []
-        # Dedupe near-duplicate names (e.g. "We Care Wednesday" and
-        # "We Care Wednesdays") while preserving order.
+
+    # Build a quick "what's actually placed today" descriptor from the data
+    # for days that don't have a recurring ritual name. RP runs fireworks on
+    # Friday and giveaways on Saturday today; the schedule should show that
+    # as the current state even though those aren't tagged recurring.
+    rp_dow_by_day = {d["day"]: d for d in rp_dow}
+
+    def current_descriptor(day: str) -> str | None:
+        names = day_map.get(day, [])
         seen, deduped = set(), []
         for n in names:
             key = n.lower().rstrip("s")
@@ -404,14 +628,72 @@ def main() -> int:
                 seen.add(key)
                 deduped.append(n)
         if deduped:
-            day_entry["current_ritual"] = ", ".join(deduped)
-        else:
-            day_entry["current_ritual"] = None
-        # Saturday is locked to fireworks; the fireworks promo type is not
-        # flagged is_recurring=TRUE in the source data, so it would not have
-        # shown up in day_map. Pin it explicitly here.
-        if d == "Sat" and not day_entry.get("current_ritual"):
-            day_entry["current_ritual"] = "Fireworks Night"
+            return ", ".join(deduped)
+        info = rp_dow_by_day.get(day) or {}
+        n = info.get("n_games", 0)
+        if not n:
+            return None
+        # Surface placements that dominate the day (>= 50% of games)
+        candidates = [
+            ("Fireworks night", info.get("fireworks")),
+            ("Giveaway night",  info.get("giveaways")),
+            ("Food/drink night", info.get("food_drink")),
+        ]
+        for label, ratio in candidates:
+            if ratio and "/" in ratio:
+                num, den = ratio.split("/")
+                if int(den) and int(num) / int(den) >= 0.5:
+                    return label
+        return None
+
+    allowed_categories = {
+        "fireworks", "giveaway", "kids", "family/community",
+        "food/drink", "ticket deal", "theme", "rest",
+    }
+    allowed_statuses = {"off", "keep", "change", "test", "skip"}
+
+    for day_entry in days:
+        d = day_entry.get("day")
+        day_entry["current_ritual"] = current_descriptor(d) if isinstance(d, str) else None
+
+        # Validate / coerce status and category
+        if day_entry.get("status") not in allowed_statuses:
+            day_entry["status"] = "skip"
+        if day_entry.get("category") not in allowed_categories:
+            day_entry["category"] = "rest" if day_entry["status"] == "off" else "theme"
+
+        if d == "Mon":
+            # RP convention: no Monday home games. Force "off" regardless of
+            # what the LLM returned.
+            day_entry["status"] = "off"
+            day_entry["category"] = "rest"
+            day_entry["proposed_ritual"] = None
+            day_entry["current_ritual"] = "No home game"
+            if not day_entry.get("rationale"):
+                day_entry["rationale"] = "Binghamton does not schedule home games on Monday."
+
+        if d == "Fri":
+            # The Saturdays finding gives the answer; override LLM if it
+            # picked anything else.
+            day_entry["status"] = "change"
+            day_entry["category"] = "giveaway"
+            day_entry["proposed_ritual"] = "Giveaway night (moved from Saturday)"
+            if not day_entry.get("rationale") or "moved" not in str(day_entry.get("rationale", "")).lower():
+                day_entry["rationale"] = (
+                    "Per the Saturdays finding: move the standard giveaway to Friday "
+                    "so Saturday can host fireworks."
+                )
+
+        if d == "Sat":
+            day_entry["status"] = "change"
+            day_entry["category"] = "fireworks"
+            day_entry["proposed_ritual"] = "Fireworks night (moved from Friday)"
+            if not day_entry.get("rationale") or "moved" not in str(day_entry.get("rationale", "")).lower():
+                day_entry["rationale"] = (
+                    "Per the Saturdays finding: move fireworks to Saturday for the "
+                    "bigger draw, swap with Friday's giveaway."
+                )
+
     parsed["days"] = days
 
     console.print(f"[cyan]Storing schedule into milb.group_narratives...[/cyan]")
