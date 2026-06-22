@@ -396,51 +396,65 @@ def load_llm_schedule() -> dict | None:
 
 # -- Render -------------------------------------------------------------------
 
-st.title("Rituals")
+st.title("4. Rituals")
 st.markdown(
-    "### The recurring promo slate is in place. The remaining gap is who it speaks to."
+    "### Recurring weekly promotions — \"Thirsty Thursday,\" \"Taco Tuesday,\" "
+    "Family Sunday. Binghamton has the slate. The question is who it speaks to."
 )
 st.caption(
-    "Binghamton runs a recurring promotion on roughly a quarter of home games "
-    "in 2025. That is ahead of well-known clubs like the Portland Sea Dogs and "
-    "the Erie SeaWolves, but well below the league leaders who run rituals on "
-    "more than half their schedule. The composition leans toward kids and "
-    "family audiences. Peer top performers lean toward adult weeknight food "
-    "and drink formats."
+    "A **ritual** is a promotion that runs the same night every week so fans "
+    "learn to plan around it. Binghamton runs one on about a quarter of home "
+    "games in 2025 — ahead of well-known clubs like Portland and Erie, but "
+    "well behind the league leaders. The composition of the slate leans "
+    "toward kids and family. The best-drawing teams lean toward adult "
+    "weeknight food-and-drink nights."
 )
+
+with st.container(border=True):
+    st.markdown(
+        "**About this page.** Mixed view. The first chart compares every "
+        "Double-A team. The second one compares Binghamton's recurring "
+        "promotional mix to the rest of Double-A. The third chart looks at "
+        "the 12 best-drawing teams across MiLB to see how they structure "
+        "their week. Each chart is labeled."
+    )
 
 st.divider()
 
 # ─── Section 1: What we see ────────────────────────────────────────────────
-st.subheader("What we see")
+st.subheader("What the data shows")
 
 metrics = load_rp_headline_metrics()
 rank_info = load_rp_rank()
 
 c1, c2, c3 = st.columns(3)
 c1.metric(
-    "Recurring promos in 2025",
+    "Binghamton: home games with a recurring promo (2025)",
     f"{metrics['pct']*100:.0f}%",
     f"of {metrics['n_games']} home games",
 )
 c2.metric(
-    "Rank in Double-A",
+    "Binghamton's rank among Double-A",
     f"#{rank_info['rank']} of {rank_info['total']}" if rank_info["rank"] else "n/a",
     "ahead of Portland, Erie, Reading" if rank_info["rank"] else None,
 )
 c3.metric(
     "Days of the week with a ritual",
     f"{metrics['n_dow']} of 7",
-    "Saturday locked for fireworks",
+    "Saturday is reserved for fireworks",
 )
 
 st.caption(
-    "Promotional data is only available from 2025 onward (MLB Stats API "
-    "limitation). The page does not infer what was on the schedule before "
-    "that. The numbers above describe the slate that is in place today."
+    "Promotional data is reliable from 2025 onward (it wasn't published "
+    "publicly before that). The numbers above describe the slate that's "
+    "in place today."
 )
 
-st.markdown("**Where Binghamton ranks in Double-A, 2025**")
+st.markdown(
+    "**Chart 1 — all Double-A teams.** Each row is one team's share of home "
+    "games carrying at least one recurring promotion in 2025. Binghamton is "
+    "highlighted with an arrow."
+)
 
 da = load_doublea_recurring_2025()
 if not da.empty:
@@ -457,7 +471,7 @@ if not da.empty:
         da, y="label_team", x="pct_display",
         orientation="h",
         color="color", color_discrete_map="identity",
-        labels={"pct_display": "% of home games with a recurring promo",
+        labels={"pct_display": "% of home games with a recurring promotion",
                 "label_team": ""},
         text=da["pct_display"].round(0).astype(int).astype(str) + "%",
     )
@@ -472,50 +486,50 @@ if not da.empty:
     fig.update_yaxes(tickmode="linear", tickfont=dict(size=11))
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        "Each row: a Double-A team's 2025 share of home games carrying at "
-        "least one recurring promo. Binghamton is marked with an arrow and "
-        "highlighted in orange. Restricted to teams with full-season promo "
-        "enrichment."
+        "How to read it: longer bars = more home games with a recurring "
+        "promotion on the calendar. Binghamton sits in the upper third — "
+        "ahead of clubs like Portland and Erie. Teams with more than half "
+        "their schedule on rituals are the rare standout cases."
     )
 
 st.divider()
 
 # ─── Section 2: Why it matters ─────────────────────────────────────────────
-st.subheader("Why it matters")
+st.subheader("Why it matters — habit")
 
 st.markdown(
-    "A recurring promo is the only kind of promo that trains habit. A fan "
-    "who comes to one Thirsty Thursday is more likely to come to the next "
-    "Thursday than someone who came to a one-off fireworks night. Habit "
-    "compounds across a season. A weeknight slate that fans know by name "
-    "is the cheapest tool a club has for lifting low-draw nights."
+    "A recurring promotion is the only kind of promotion that *trains a "
+    "habit*. A fan who comes once to a Thirsty Thursday is more likely to "
+    "come to the next Thursday than someone who came to a one-off fireworks "
+    "night. Habit compounds across a season. A weeknight that fans know by "
+    "name is the cheapest tool a club has for lifting low-draw nights."
 )
 
 st.markdown(
-    "Binghamton has roughly 65 home games each season, about 40 of them on "
-    "a weeknight. If a single weeknight ritual lifted average attendance "
-    "on its day by 200 fans across 14 home games of that day, that is "
-    "2,800 additional fans through the gate per season. At the report's "
-    f"$30 per fan composite estimate, that is roughly "
+    "Binghamton plays roughly 65 home games each season — about 40 on a "
+    "weeknight. If a single weeknight ritual added 200 fans to its night "
+    "across the season's 14 home games on that day, that's **2,800 "
+    "additional fans** through the gate per year. At the report's $30 "
+    "per fan working estimate, that's roughly "
     f"**{format_dollars_short(2800 * REVENUE_PER_FAN_USD)} in revenue per "
     "season** from one slot."
 )
 st.caption(
-    "Illustrative arithmetic only. 200 fans per game is a conservative "
-    "rule-of-thumb lift for a successful weeknight ritual at Double-A "
-    "venue size. The actual number from any specific pilot would need to "
-    "be measured on the games it runs."
+    "Back-of-the-envelope arithmetic only. 200 fans per game is a "
+    "conservative rule of thumb for a successful weeknight ritual at a "
+    "Double-A ballpark. Any real pilot would need to be measured on the "
+    "games it ran."
 )
 
 st.divider()
 
 # ─── Section 3: What's behind it ───────────────────────────────────────────
-st.subheader("What's behind it")
+st.subheader("What's behind it — who the slate speaks to")
 
 st.markdown(
-    "Where Binghamton's recurring slate differs from the rest of Double-A "
-    "is in the composition. The same coverage on the calendar, but a "
-    "different audience profile."
+    "Where Binghamton's slate differs from the rest of Double-A is in "
+    "**who it's aimed at**. Roughly the same number of recurring promotions "
+    "on the calendar, but a noticeably different audience mix."
 )
 
 mix = load_recurring_promo_mix()
@@ -540,11 +554,16 @@ if not mix.empty:
     long["flag"] = pd.Categorical(long["flag"], categories=flag_order, ordered=True)
     long = long.sort_values(["flag", "who"])
 
+    st.markdown(
+        "**Chart 2 — Binghamton vs. other Double-A.** What share of each "
+        "group's recurring promotions are aimed at each kind of audience."
+    )
+
     fig = px.bar(
         long, x="flag", y="rate_display", color="who",
         barmode="group",
         color_discrete_map={"Binghamton": RP_COLOR, "Other Double-A": PEER_COLOR},
-        labels={"rate_display": "% of recurring promos carrying this flag",
+        labels={"rate_display": "% of recurring promotions in this category",
                 "flag": "", "who": ""},
         text=long["rate_display"].astype(str) + "%",
     )
@@ -557,68 +576,56 @@ if not mix.empty:
     )
     st.plotly_chart(fig, use_container_width=True)
     st.caption(
-        "Each pair of bars: the share of recurring promos that carry a "
-        "given audience tag. A single promotion can carry more than one "
-        "tag, so columns do not sum to 100. The kids and family bars are "
-        "where Binghamton diverges most from the peer set."
+        "How to read it: each pair of bars is one audience category. A "
+        "single promotion can fit into more than one category (a Family "
+        "Funday hits both Kids and Family/Community), so the bars don't "
+        "sum to 100%. The Kids and Family bars are where Binghamton stands "
+        "out most — much heavier on those than the typical Double-A team."
     )
 
-st.markdown("**How 12 high-attendance teams structure their week, 2025**")
+st.markdown(
+    "**Chart 3 — twelve of the best-drawing teams in the country.** What "
+    "each of them runs every week, by day."
+)
 
 winners_week = load_winning_teams_week()
 if not winners_week.empty:
     st.dataframe(winners_week, use_container_width=True, hide_index=True)
     st.caption(
-        "Each row is one team in the top of the league on 2025 capacity "
-        "utilization (cap_util at or above 65%, Triple-A / Double-A / "
-        "High-A only). Each day-of-week cell shows the dominant promo "
-        "category at 50% or more of that team's home games on that day. "
-        "Alcohol is split from food using offer-name keywords so a "
-        "Thirsty Thursday counts as alcohol and a Taco Tuesday counts as "
-        "food. A dash means no single category covers a majority of that "
-        "day for that team."
+        "How to read it: each row is one high-attendance team. Each "
+        "day-of-week column shows the one promotional category that runs "
+        "on most of that team's games that day. A dash means no single "
+        "category dominates. \"Cap util\" is the share of seats filled "
+        "across the season. \"Sat vs Fri\" shows whether Saturday outdraws "
+        "Friday for that team. The list is mixed levels (Triple-A, "
+        "Double-A, High-A)."
     )
 
-    st.markdown(
-        "**A note on fireworks placement before reading further.** Most "
-        "teams in this table run fireworks on Friday rather than Saturday, "
-        "which looks at first glance like it contradicts the Saturdays "
-        "finding. The reconciliation matters:"
-    )
-    st.markdown(
-        "- High capacity utilization and the sat-winner pattern are "
-        "**different things**. Of the 12 teams above, only 2 (Pensacola "
-        "+6%, Portland +12%) draw better on Saturday than Friday. Six are "
-        "neutral. Four are themselves sat-losers (South Bend, Greenville, "
-        "Corpus Christi, Tulsa). Those four fill seats overall but still "
-        "leave the Saturday upside on the table.\n"
-        "- The Saturdays finding's recommendation applies specifically to "
-        "teams with the sat-loser pattern. Binghamton is in that group. "
-        "South Bend, Greenville, and Corpus Christi are too. None of them "
-        "has tried the swap.\n"
-        "- The teams that match Binghamton's profile AND have flipped to "
-        "sat-winner are rare. Pensacola is the cleanest one: Double-A, "
-        "similar climate, similar capacity utilization, and the exact "
-        "swap pattern (Giveaway Fri 100%, Fireworks Sat 100%)."
-    )
+    with st.expander("A few things worth noticing in this table"):
+        st.markdown(
+            "**Most teams in the table run fireworks on Friday.** At first "
+            "glance that looks like it contradicts the Saturdays finding. "
+            "It doesn't. Filling seats overall and *winning Saturday "
+            "specifically* are two different things. Only two of these "
+            "twelve teams — Pensacola and Portland — actually draw "
+            "better on Saturday than on Friday. Four of them are losing "
+            "Saturday in the same pattern Binghamton has. They fill seats "
+            "overall, but they leave the Saturday upside on the table.\n\n"
+            "**The closest comp to Binghamton is Pensacola.** Same level "
+            "(Double-A), similar climate, fills 78% of seats, and they "
+            "run the exact swap the Saturdays finding recommends — "
+            "fireworks on Saturday, giveaway on Friday."
+        )
 
-    st.info(
-        "**The case study:** Pensacola Blue Wahoos is the closest direct "
-        "comp for Binghamton in this table. AA, 78% capacity utilization, "
-        "and the swap pattern in operation. The Saturdays-finding "
-        "recommendation is what Pensacola is already doing."
-    )
-
-    st.markdown(
-        "**Reading the table for the alcohol-night call:** Of the 12 teams "
-        "above, eight anchor Thursday with an alcohol ritual (Thirsty "
-        "Thursday, $3 Thursday, Three Dollar Thursday, Dollar Drink Night, "
-        "Twisted Thursday, Tito's). Tuesday alcohol anchors show up at "
-        "only two teams in the wider sample. Two distinct alcohol nights "
-        "per week show up at exactly two of 25 high-attendance teams "
-        "league-wide. The honest read is: at most one alcohol night, and "
-        "Thursday is where it belongs."
-    )
+        st.markdown(
+            "**On Thursday alcohol nights.** Eight of these twelve teams "
+            "anchor Thursday with an adult drink night — Thirsty Thursday, "
+            "$3 Thursday, Three Dollar Thursday, Dollar Drink Night, and "
+            "so on. Tuesday adult drink nights are rare. Running two "
+            "different adult drink nights in one week is rarer still. "
+            "The pattern across the league: at most one drink night a "
+            "week, and Thursday is the day it belongs on."
+        )
 
 st.divider()
 
@@ -626,62 +633,62 @@ st.divider()
 st.subheader("What to do with this")
 
 st.markdown(
-    "**About Tuesday before the recommendations.** Tuesday has been "
-    "Binghamton's worst day of the week in 2025 at roughly 24% capacity "
-    "utilization, and the trend across recent seasons has been downward, "
-    "not flat. The current Twofer Tuesday ritual has been on the calendar "
-    "for some time and has not stopped the decline. The implication is "
-    "that no single ritual change is likely to reverse Tuesday on its "
-    "own. Tuesday belongs in a longer-horizon conversation about pricing, "
-    "marketing, and whether the day-of-week has structural demand at "
-    "this market size. The schedule below treats the Tuesday format as "
-    "one of several pilots, not as the lever that fixes Tuesday."
+    "**A note on Tuesday first.** Tuesday has been Binghamton's worst day "
+    "of the week in 2025 (roughly 24% of seats filled), and it's been "
+    "trending down, not flat. The current Twofer Tuesday has been on the "
+    "calendar for a while and hasn't reversed it. No one ritual change "
+    "is likely to fix Tuesday on its own — that's a longer conversation "
+    "about pricing, marketing, and whether weeknight demand can be "
+    "built at all in this market. The ideas below treat Tuesday as one "
+    "of several things to try, not the silver bullet."
 )
 
 c1, c2 = st.columns(2)
 
 with c1:
-    st.markdown("**Strategic, for the 2027 calendar**")
+    st.markdown("**For the 2027 calendar**")
     st.markdown(
-        "- The Saturdays-finding swap (Fireworks to Saturday, Giveaway to "
-        "Friday) is the single most evidence-backed change. A direct "
-        "Double-A peer (Pensacola) already runs it.\n"
-        "- The Thursday alcohol anchor is the second most evidence-backed "
-        "change. Eight of the top 12 winning teams already run one.\n"
-        "- The kids and family rituals on Sunday are working and should "
-        "stay. Wednesday community / heritage matches the peer pattern."
+        "- The fireworks swap from the Saturdays page is the single most "
+        "evidence-backed change. A direct Double-A peer (Pensacola) "
+        "already runs it.\n"
+        "- An adult drink night anchored on Thursday is the second most "
+        "evidence-backed change. Eight of twelve winning teams in the "
+        "table above already do this.\n"
+        "- The Kids and Family rituals on Sunday are working — keep "
+        "them. Wednesday's community/heritage placement matches the "
+        "peer pattern too."
     )
 
 with c2:
-    st.markdown("**Candidate formats to pilot**")
+    st.markdown("**Formats worth piloting**")
     st.markdown(
-        "- **Thursday (alcohol pilot, highest evidence):** Thirsty "
-        "Thursday, Three Dollar Thursday, or a Binghamton-branded "
-        "equivalent. Eight winning teams already do this.\n"
-        "- **Tuesday (lower-evidence pilot):** Shift Tuesday away from "
-        "alcohol toward food or community. Taco Tuesday, Doggone Tuesday, "
-        "or a community-anchored Tuesday. Not expected to fix the "
-        "Tuesday decline on its own, but the current format is non-"
-        "standard relative to winning teams.\n"
-        "- One alcohol night per week, not two. Of 25 winning teams, "
-        "only two run two distinct alcohol nights. The default is "
-        "Thursday alcohol; Tuesday food."
+        "- **Thursday (strongest case):** Thirsty Thursday, Three Dollar "
+        "Thursday, or a Binghamton-branded version. Eight winning teams "
+        "are already doing this.\n"
+        "- **Tuesday (weaker case):** Shift Tuesday away from the drink "
+        "format toward food or community. Taco Tuesday, Doggone Tuesday, "
+        "or a community-anchored Tuesday. Not expected to fix Tuesday on "
+        "its own — but the current format is unusual compared to the "
+        "winners.\n"
+        "- **One adult drink night a week, not two.** Of the 25 highest-"
+        "attendance teams league-wide, only two run two drink nights. The "
+        "standard is Thursday drinks, Tuesday food."
     )
 
 st.markdown(
-    "**This is a hypothesis-driven schedule, not a directive.** The page "
-    "shows what successful peer teams structure their week to look like "
-    "and where Binghamton currently diverges from that pattern. It does "
-    "not prove that adopting these formats causes attendance to rise. "
-    "The Saturdays finding is the most direct evidence-based call. The "
-    "weeknight pilots are candidate tests, and the only way to know "
-    "whether any of them moves Binghamton's gates is to run them and "
-    "measure them against the same day in the same month in prior "
-    "seasons."
+    "**This is a set of hypotheses, not a directive.** The page shows "
+    "what high-attendance teams do, and where Binghamton looks different. "
+    "It doesn't prove that adopting these formats will move the gates — "
+    "the only way to know that is to pilot one or two and measure them "
+    "against the same day-of-week in the same month in prior seasons."
 )
 
 st.markdown("---")
-st.markdown("**A proposed weekly schedule for Binghamton (LLM-generated)**")
+st.markdown(
+    "**A proposed weekly schedule for Binghamton.** Generated by an AI "
+    "assistant on top of the patterns shown above — meant as a starting "
+    "point for conversation, not a final calendar."
+)
 
 llm = load_llm_schedule()
 if llm is None or not llm.get("schedule"):
@@ -728,17 +735,25 @@ else:
 
 st.divider()
 
-# ─── Section 5: See also ──────────────────────────────────────────────────
+# ─── Next + See also ──────────────────────────────────────────────────────
+st.markdown(
+    "**That's the walk-through.** Thanks for reading. The deeper analyses "
+    "behind every chart on this page are in the sidebar under "
+    "*Methodology & Deeper Analyses* — explore at your own pace."
+)
+st.page_link("Picture.py", label="← Back to the start")
+
+st.markdown("")
 see_also([
     ("Peer Playbook",
      "pages/12_Peer_Playbook.py",
-     "side-by-side profiles for hand-picked peer teams, with the full promo mix"),
+     "side-by-side profiles of hand-picked peer teams, with the full promo mix"),
     ("Promo Strategy",
      "pages/7_Promo_Strategy.py",
-     "the deeper view on how each Double-A club balances its promo flags"),
+     "deeper view on how each Double-A club balances its promotional mix"),
     ("Hypothesis Lab",
      "pages/13_Hypothesis_Lab.py",
-     "DOW-by-promo lift estimates and stacking effects across the league"),
+     "how individual promotions affect attendance, broken out by day of week"),
 ])
 
 render_footer(scripts=["build_features"])

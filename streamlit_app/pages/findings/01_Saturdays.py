@@ -172,19 +172,28 @@ def load_rp_sat_promo_mix() -> pd.DataFrame:
 
 # -- Render -------------------------------------------------------------------
 
-st.title("Saturdays")
+st.title("1. Saturdays")
 st.markdown(
     "### Friday outdraws Saturday at home in Binghamton — every season since 2023."
 )
 st.caption(
     "Four straight years, the same pattern: Friday is the bigger night and "
-    "Saturday underperforms. The cause shows up in the promo calendar."
+    "Saturday underperforms. The most likely cause shows up in the promotional "
+    "calendar."
 )
+
+with st.container(border=True):
+    st.markdown(
+        "**About this page.** This is the headline finding. Most of the numbers "
+        "on this page are about Binghamton specifically. Two charts compare "
+        "Binghamton to other Double-A teams so you can see how unusual the "
+        "pattern is. Each chart is labeled with what you're looking at."
+    )
 
 st.divider()
 
 # ─── Section 1: What we see ────────────────────────────────────────────────
-st.subheader("What we see")
+st.subheader("What the data shows")
 
 rp = load_rp_fri_sat()
 if not isinstance(rp, pd.DataFrame) or rp.empty:
@@ -194,12 +203,17 @@ if not isinstance(rp, pd.DataFrame) or rp.empty:
 rp["day"] = rp["day_of_week"].map({FRI_DOW: "Friday", SAT_DOW: "Saturday"})
 rp["season"] = rp["season"].astype(str)
 
+st.markdown(
+    "**Chart 1 — Binghamton only.** Average attendance at home Friday games "
+    "vs. home Saturday games, season by season."
+)
+
 fig = px.bar(
     rp,
     x="season", y="avg_att", color="day",
     barmode="group",
     color_discrete_map={"Friday": "#3a9bd5", "Saturday": RP_COLOR},
-    labels={"avg_att": "Avg attendance", "season": "Season", "day": ""},
+    labels={"avg_att": "Average fans per game", "season": "Season", "day": ""},
     text=rp["avg_att"].round(0).astype(int).astype(str),
 )
 fig.update_traces(textposition="outside")
@@ -216,16 +230,17 @@ wide["Gap (Sat − Fri)"] = (wide["Saturday"] - wide["Friday"]).round(0).astype(
 wide["Friday"] = wide["Friday"].round(0).astype(int)
 wide["Saturday"] = wide["Saturday"].round(0).astype(int)
 st.caption(
-    "Each pair of bars: one season. Every season the Friday bar is taller. "
-    "Note 2026 is mid-season (through June). The July 3-5 holiday window is "
-    "excluded — July 4 fireworks are calendar-driven, not a team scheduling "
-    "choice."
+    "How to read it: each pair of bars is one season. Friday in blue, "
+    "Saturday in purple. The Friday bar is taller every year — even in "
+    "2024 when overall attendance climbed. 2026 is partial (through June). "
+    "The July 3-5 holiday window is excluded so a July 4 fireworks night "
+    "isn't comparing apples to oranges."
 )
 
 st.divider()
 
 # ─── Section 2: Why it matters ─────────────────────────────────────────────
-st.subheader("Why it matters")
+st.subheader("Why it matters — in seats")
 
 # Use the most recent complete season (2025) for the seats translation
 yr_2025 = rp[rp["season"] == "2025"]
@@ -237,27 +252,29 @@ if not yr_2025.empty:
     annual_fans_2025 = gap_2025 * n_sat_2025
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Friday avg (2025)", f"{fri_2025:,.0f}")
-    col2.metric("Saturday avg (2025)", f"{sat_2025:,.0f}", f"−{gap_2025:,.0f} vs Fri",
+    col1.metric("Friday average, 2025", f"{fri_2025:,.0f} fans")
+    col2.metric("Saturday average, 2025", f"{sat_2025:,.0f} fans",
+                f"−{gap_2025:,.0f} vs. Friday",
                 delta_color="inverse")
-    col3.metric("Annualized gap", f"~{annual_fans_2025:,.0f} fans",
-                f"{n_sat_2025} home Saturdays")
+    col3.metric("If Saturday matched Friday",
+                f"~{annual_fans_2025:,.0f} more fans",
+                f"across {n_sat_2025} home Saturdays")
 
 st.markdown(
-    "If Saturdays performed at Friday's level in 2025, the ballpark would have "
-    "seen roughly **{:,} more fans through the gates over the home schedule** — "
-    "without playing a single extra game.".format(int(annual_fans_2025))
+    "If Saturdays drew like Fridays in 2025, the ballpark would have welcomed "
+    "roughly **{:,} more fans through the gates over the season** — without "
+    "scheduling a single extra game.".format(int(annual_fans_2025))
 )
 
 st.divider()
 
 # ─── Section 3: What's behind it ───────────────────────────────────────────
-st.subheader("What's behind it")
+st.subheader("What's behind it — the promo calendar")
 st.markdown(
-    "**The promo calendar is inverted.** Across Double-A, the teams that win on "
-    "Saturday put fireworks on Saturday. Binghamton has done the opposite — "
-    "fireworks on Friday, a giveaway on Saturday. The pattern flipped in 2024 "
-    "and has held since."
+    "**The promo calendar is flipped.** Across Double-A, the teams that draw "
+    "well on Saturday put **fireworks on Saturday**. Binghamton does the "
+    "opposite — fireworks on Friday, a giveaway on Saturday. The pattern "
+    "started in 2024 and has held since."
 )
 
 doublea = load_doublea_sat_promo_mix()
@@ -281,9 +298,9 @@ if not doublea.empty:
         cmp_df = pd.concat([cmp_df, rp_row], ignore_index=True)
 
     camp_label = {
-        "sat_winner": "Double-A Sat-winners",
-        "neutral":    "Double-A neutral",
-        "sat_loser":  "Double-A Sat-losers",
+        "sat_winner": "Double-A teams that win Saturday",
+        "neutral":    "Double-A teams: neutral",
+        "sat_loser":  "Double-A teams that lose Saturday",
         "Binghamton": "Binghamton",
     }
     cmp_df["group"] = cmp_df["camp"].map(camp_label)
@@ -296,16 +313,24 @@ if not doublea.empty:
         "pct_fireworks": "Fireworks", "pct_giveaway": "Giveaway",
     })
 
-    order = ["Double-A Sat-winners", "Double-A neutral", "Double-A Sat-losers", "Binghamton"]
+    order = ["Double-A teams that win Saturday",
+             "Double-A teams: neutral",
+             "Double-A teams that lose Saturday",
+             "Binghamton"]
     long["group"] = pd.Categorical(long["group"], categories=order, ordered=True)
     long = long.sort_values("group")
     long["rate_pct"] = (long["rate"] * 100).round(0)
+
+    st.markdown(
+        "**Chart 2 — comparing Binghamton to the rest of Double-A.** What share "
+        "of each group's Saturdays carry fireworks vs. a giveaway, in 2025."
+    )
 
     fig2 = px.bar(
         long, x="group", y="rate_pct", color="promo",
         barmode="group",
         color_discrete_map={"Fireworks": "#d4572e", "Giveaway": "#5aa9d9"},
-        labels={"rate_pct": "% of Saturdays", "group": "", "promo": ""},
+        labels={"rate_pct": "% of Saturday games", "group": "", "promo": ""},
         text=long["rate_pct"].astype(int).astype(str) + "%",
     )
     fig2.update_traces(textposition="outside")
@@ -314,12 +339,14 @@ if not doublea.empty:
         yaxis_ticksuffix="%",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         margin=dict(t=40, b=20),
-        title_text=f"Saturday promo mix, Double-A {latest}",
+        title_text=f"Saturday promotions, Double-A teams in {latest}",
     )
     st.plotly_chart(fig2, use_container_width=True)
     st.caption(
-        "Sat-winning Double-A teams run fireworks on roughly half their Saturdays. "
-        "Binghamton ran fireworks on 0 of its Saturdays — and a giveaway on most of them."
+        "How to read it: each pair of bars is one group of teams. The left "
+        "group — teams that draw well on Saturday — runs fireworks on roughly "
+        "half their Saturdays. Binghamton (far right) ran fireworks on **zero** "
+        "Saturdays, and a giveaway on most of them. That's the inversion."
     )
 
 # RP's own multi-year promo mix table
@@ -329,11 +356,11 @@ if not rp_promo.empty:
     show["Giveaway %"]  = (show["pct_giveaway"]  * 100).round(0).astype(int).astype(str) + "%"
     show = show.rename(columns={"season": "Season", "n_sat": "Saturdays"})
     show = show[["Season", "Saturdays", "Fireworks %", "Giveaway %"]]
-    st.markdown("**Binghamton's own Saturday promo mix:**")
+    st.markdown("**Table — Binghamton only. Saturday promotions by year:**")
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.caption(
-        "Note: promo data is reliably available from 2025 onward. The pattern "
-        "has not changed in 2026."
+        "Promotional data is reliable from 2025 onward (the league started "
+        "exposing it publicly that year). The pattern hasn't changed in 2026."
     )
 
 st.divider()
@@ -343,42 +370,48 @@ st.subheader("What to do with this")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("**Strategic — for next year's calendar planning**")
+    st.markdown("**For 2027 — the big move**")
     st.markdown(
-        "- When the 2027 fireworks schedule is negotiated with the city, the data "
-        "supports moving the standing fireworks night from Friday to Saturday.\n"
-        "- A like-for-like swap (fireworks Sat instead of Fri, giveaway Fri "
-        "instead of Sat) is projected to **net several hundred more fans per "
-        "home weekend**, based on a counterfactual model trained on 2025 data.\n"
-        "- This is the highest-leverage single change in the data."
+        "- When the 2027 fireworks calendar is negotiated with the city, the "
+        "data supports moving the standing fireworks night from **Friday to "
+        "Saturday**.\n"
+        "- A simple swap — fireworks on Saturday, giveaway on Friday — is "
+        "projected to bring in **a few hundred more fans per home weekend**. "
+        "That estimate comes from comparing every 2025 game against itself "
+        "with the promotional flag flipped on and off, using a forecasting "
+        "model trained on the full league.\n"
+        "- This is the single biggest change the data points to."
     )
 
 with c2:
-    st.markdown("**Tactical — for the rest of 2026**")
+    st.markdown("**For the rest of 2026 — smaller moves**")
     st.markdown(
-        "- The 2026 fireworks calendar is locked with the city, so Saturday "
-        "fireworks aren't available this season.\n"
-        "- The remaining Saturdays without fireworks are still candidates for "
-        "any high-draw promotion already on the books — concerts, marquee "
-        "giveaways, theme nights.\n"
-        "- The single-best Saturday to test a bigger-than-usual promo is "
-        "**July 18**, currently scheduled as a 1 p.m. matinee with no "
-        "headline draw."
+        "- The 2026 fireworks calendar is already locked with the city, so "
+        "Saturday fireworks aren't available this season.\n"
+        "- The remaining Saturdays without fireworks are still strong "
+        "candidates for any other high-draw promotion you have on hand — "
+        "concerts, marquee giveaways, theme nights.\n"
+        "- The single best Saturday to test a bigger-than-usual promotion is "
+        "**July 18**, currently a 1 p.m. matinee with no headline event."
     )
 
 st.divider()
 
-# ─── Section 5: See also ──────────────────────────────────────────────────
+# ─── Next + See also ──────────────────────────────────────────────────────
+st.markdown("**Next page in the walk-through:**")
+st.page_link("pages/findings/02_Sundays.py", label="Next: 2. Sundays →")
+
+st.markdown("")
 see_also([
     ("Weekend Playbook",
      "pages/11_Weekend_Playbook.py",
-     "the original league-wide analysis behind this finding"),
+     "the deeper analysis this finding came out of"),
     ("Hypothesis Lab",
      "pages/13_Hypothesis_Lab.py",
-     "counterfactual model estimates per promo type"),
+     "how individual promotions affect attendance, modeled per game"),
     ("Recommendations",
      "pages/10_Recommendations.py",
-     "the full prioritized recommendation list for Binghamton"),
+     "the prioritized recommendation list for Binghamton"),
 ])
 
 render_footer(scripts=["build_features", "promo_lift_cf"])

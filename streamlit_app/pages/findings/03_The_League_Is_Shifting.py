@@ -86,21 +86,30 @@ def load_league_season_trend() -> pd.DataFrame:
 
 # -- Render -------------------------------------------------------------------
 
-st.title("The League is Shifting")
+st.title("3. The League is Shifting")
 st.markdown(
-    "### The weekend premium is shrinking across the entire league — and "
-    "weekday attendance is holding steady."
+    "### Friday and Saturday used to be the league's best nights. They still "
+    "are — but the gap is shrinking, and weekdays are holding up."
 )
 st.caption(
-    "Friday and Saturday used to be the league's seat-fillers. Three years "
-    "later that's less true. This is context for the Binghamton story: the "
-    "structural ground is moving under everyone's feet."
+    "This is the only finding on the site that's about *all* of Minor League "
+    "Baseball, not just Binghamton. The ground is moving under everyone's "
+    "feet, which makes the choices on the previous two pages more important, "
+    "not less."
 )
+
+with st.container(border=True):
+    st.markdown(
+        "**About this page.** Every number here is league-wide — every team, "
+        "every level, four seasons. Binghamton is not called out specifically. "
+        "The point is to give you the backdrop the Saturdays and Sundays "
+        "findings sit on top of."
+    )
 
 st.divider()
 
 # ─── Section 1: What we see ────────────────────────────────────────────────
-st.subheader("What we see")
+st.subheader("What the data shows")
 
 df = load_dow_by_season()
 if not isinstance(df, pd.DataFrame) or df.empty:
@@ -116,11 +125,17 @@ plot_df = df[df["day"].isin(["Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])].copy()
 plot_df["day"] = pd.Categorical(plot_df["day"], categories=DAY_ORDER, ordered=True)
 plot_df = plot_df.sort_values(["day", "season"])
 
+st.markdown(
+    "**Chart 1 — league-wide.** Average share of seats filled, by day of the "
+    "week, with one line per season."
+)
+
 fig = px.line(
     plot_df, x="day", y="cap_pct", color="season",
     markers=True,
     color_discrete_map={k: v for k, v in SEASON_COLORS.items() if isinstance(k, str)},
-    labels={"cap_pct": "% of seats filled", "day": "", "season": "Season"},
+    labels={"cap_pct": "% of seats filled", "day": "Day of week",
+            "season": "Season"},
     category_orders={"day": DAY_ORDER},
 )
 fig.update_traces(line=dict(width=3), marker=dict(size=10))
@@ -133,10 +148,11 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 st.caption(
-    "Each line is one season's league average. Tuesday/Wednesday/Thursday "
-    "barely move year over year. Friday and Saturday are the ones falling. "
-    "All four seasons are measured over the same March-to-June window so "
-    "2026 (in flight) is fairly comparable."
+    "How to read it: each line is one season, across the week. Tuesday, "
+    "Wednesday and Thursday barely move year over year. Friday and Saturday "
+    "are the ones falling — that's the shift. All four seasons are measured "
+    "across the same March-to-June window so 2026 (still in progress) is "
+    "fairly comparable to prior years."
 )
 
 st.divider()
@@ -151,40 +167,45 @@ fri_26 = float(df[(df["season"] == "2026") & (df["day"] == "Fri")]["cap_pct"].il
 sat_26 = float(df[(df["season"] == "2026") & (df["day"] == "Sat")]["cap_pct"].iloc[0])
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Friday cap util", f"{fri_26:.1f}%", f"{fri_26 - fri_23:+.1f}pp vs 2023",
+c1.metric("Friday: share of seats filled",
+          f"{fri_26:.1f}%",
+          f"{fri_26 - fri_23:+.1f} points vs. 2023",
           delta_color="inverse")
-c2.metric("Saturday cap util", f"{sat_26:.1f}%", f"{sat_26 - sat_23:+.1f}pp vs 2023",
+c2.metric("Saturday: share of seats filled",
+          f"{sat_26:.1f}%",
+          f"{sat_26 - sat_23:+.1f} points vs. 2023",
           delta_color="inverse")
-c3.metric("Weekend premium", "Compressing",
-          "Weekday util barely moved")
+c3.metric("Weekday share of seats filled",
+          "Barely changed",
+          "Tue / Wed / Thu have held flat")
 
 st.markdown(
-    "The historical assumption — *Friday and Saturday are reliably big nights, "
-    "so cluster the marquee promotions there* — was true in 2023. It is "
-    "measurably less true in 2026.\n\n"
-    "This does not excuse the Binghamton Saturday gap. It reframes how "
-    "much the calendar can be expected to lift attendance on its own. If "
-    "the weekend keeps compressing, *every* team needs sharper promo "
-    "execution to hit historical numbers."
+    "The old rule of thumb — *Friday and Saturday are reliable big nights, "
+    "so cluster the marquee promotions there* — was true in 2023. It's "
+    "noticeably less true in 2026.\n\n"
+    "This doesn't excuse Binghamton's Saturday gap (that's still on top of "
+    "the league-wide trend, not explained by it). What it does mean is "
+    "every team has to work harder to hit the attendance numbers it "
+    "used to. The right promotion on the right night matters more than "
+    "it used to."
 )
 
 st.divider()
 
 # ─── Section 3: What's behind it ───────────────────────────────────────────
-st.subheader("What's behind it")
+st.subheader("What's behind it — best guesses")
 st.markdown(
-    "We do not have a definitive answer for why the league-wide weekend "
-    "premium is shrinking. Candidate explanations — none yet proven in this "
-    "dataset — include:\n"
-    "- Households increasingly using Saturday for other commitments (kids' "
-    "sports, travel sports, entertainment competition)\n"
-    "- MLB.tv and streaming substituting for live attendance, more on "
+    "There's no clean single answer for why Friday and Saturday are softening "
+    "league-wide. The most plausible explanations — none of them proven "
+    "inside this dataset — include:\n"
+    "- Households filling Saturday with other things (kids' sports, travel "
+    "sports, more competing entertainment)\n"
+    "- Streaming (MLB.tv, etc.) substituting for live attendance, more on "
     "weekends than weekdays\n"
-    "- Post-pandemic norms taking longer than expected to normalize\n"
-    "- General economic pressure on discretionary spend\n\n"
-    "What we *can* say is the pattern is league-wide and consistent, not a "
-    "Binghamton-only effect. The Promo Strategy and Competitive Intel pages "
-    "have deeper cuts on how individual teams are responding."
+    "- Post-pandemic patterns taking longer to settle than people expected\n"
+    "- General economic pressure on discretionary spending\n\n"
+    "What we *can* say with confidence: this pattern is everywhere, not just "
+    "Binghamton."
 )
 
 st.divider()
@@ -194,34 +215,37 @@ st.subheader("What to do with this")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("**Strategic — for multi-year planning**")
+    st.markdown("**For multi-year planning**")
     st.markdown(
-        "- Don't assume the weekend premium recovers. Plan as if Friday and "
-        "Saturday continue to compress 1–2pp per year.\n"
-        "- The marginal value of getting a marquee promotion onto the "
-        "*right* night (the Saturdays finding) goes up, not down, in this "
-        "environment.\n"
-        "- Diversification: weekdays haven't fallen. There's defensible "
-        "argument for shifting some promotional spend from a saturated "
-        "weekend onto a Thursday or Tuesday that hasn't declined."
+        "- Don't assume the weekend bounces back. Plan as if Friday and "
+        "Saturday continue to soften a point or two each year.\n"
+        "- Getting the right promotion onto the right weekend night (see the "
+        "Saturdays finding) becomes *more* valuable in this environment, "
+        "not less.\n"
+        "- Weekdays haven't fallen. There's a defensible argument for "
+        "shifting some marketing spend from a saturated Saturday onto a "
+        "Thursday or Tuesday that hasn't declined."
     )
 
 with c2:
-    st.markdown("**Tactical — for in-season conversations**")
+    st.markdown("**For in-season conversations**")
     st.markdown(
-        "- Use this when peers, ownership, or partners ask *\"why is "
-        "attendance softer this year?\"* — it's the industry, not just "
-        "Binghamton.\n"
-        "- If a sponsor is asking about Saturday ROI, the trend line above "
-        "is the honest frame: Saturdays everywhere are less of a lock "
+        "- Useful when ownership, sponsors, or partners ask *\"why is "
+        "attendance softer this year?\"* — it's the industry, not Binghamton.\n"
+        "- If a sponsor is asking about Saturday performance, the chart "
+        "above is the honest frame: Saturdays everywhere are less of a lock "
         "than they used to be.\n"
         "- Don't use this to lower the bar internally. The Binghamton "
-        "Saturday gap is on top of the league shift, not explained by it."
+        "Saturday gap is on top of the league trend, not explained by it."
     )
 
 st.divider()
 
-# ─── Section 5: See also ──────────────────────────────────────────────────
+# ─── Next + See also ──────────────────────────────────────────────────────
+st.markdown("**Next page in the walk-through:**")
+st.page_link("pages/findings/04_Rituals.py", label="Next: 4. Rituals →")
+
+st.markdown("")
 see_also([
     ("Executive Overview",
      "pages/0_Executive_Overview.py",

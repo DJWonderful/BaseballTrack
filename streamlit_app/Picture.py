@@ -186,10 +186,14 @@ def load_doublea_leaders() -> pd.DataFrame:
 
 st.title("The Picture")
 st.markdown(
-    "#### Four seasons of attendance, promotions, weather, and demographics on every MiLB team."
+    "#### A short walk through four seasons of Minor League Baseball attendance, "
+    "with Binghamton at the center."
 )
 st.markdown(
-    "Here's where the Rumble Ponies sit — and what the data says is behind it."
+    "This site is set up like a small presentation. Start here, then click through "
+    "the four findings on the left in order — **Saturdays**, **Sundays**, "
+    "**The League is Shifting**, and **Rituals**. Each page builds on the last "
+    "and takes about a minute to read."
 )
 
 # Homework signal line
@@ -198,8 +202,9 @@ n_teams = int(stats.get("n_teams") or 0)
 n_seasons = int(stats.get("n_seasons") or 0)
 n_games = int(stats.get("n_games") or 0)
 st.caption(
-    f"{n_seasons} seasons · {n_teams} teams · {n_games:,} games · attendance, weather, "
-    "promotions, demographics, peer comparisons."
+    f"What's behind the numbers: {n_seasons} seasons · {n_teams} MiLB teams · "
+    f"{n_games:,} games. For every game we have attendance, weather, the "
+    "promotional schedule, and the market the team plays in."
 )
 
 st.divider()
@@ -214,77 +219,89 @@ if k.get("cap_util_2026") is not None:
     if k.get("cap_util_2023") is not None:
         delta_pp = pct_now - k["cap_util_2023"] * 100
         c1.metric(
-            "Seats filled, 2026 to date",
+            "Binghamton: share of seats filled in 2026 so far",
             f"{pct_now:.0f}%",
-            f"{delta_pp:+.1f}pp vs 2023",
+            f"{delta_pp:+.1f} points vs. 2023",
             delta_color="inverse",
         )
     else:
-        c1.metric("Seats filled, 2026 to date", f"{pct_now:.0f}%")
+        c1.metric("Binghamton: share of seats filled in 2026 so far", f"{pct_now:.0f}%")
 else:
-    c1.metric("Seats filled, 2026", "—")
+    c1.metric("Binghamton: share of seats filled in 2026 so far", "—")
 
 if k.get("sat_gap") is not None:
     c2.metric(
-        "Saturday vs Friday gap",
+        "Binghamton: how Saturday compares to Friday (avg fans)",
         f"{int(round(k['sat_gap'])):+,} fans",
-        "4 years running",
+        "the same pattern 4 years running",
         delta_color="inverse",
     )
 else:
-    c2.metric("Saturday vs Friday gap", "—")
+    c2.metric("Binghamton: how Saturday compares to Friday", "—")
 
 if k.get("rank") is not None and k.get("rank_total"):
     c3.metric(
-        "Double-A capacity rank, 2025",
+        "Binghamton's rank among Double-A teams (2025)",
         f"#{k['rank']} of {k['rank_total']}",
-        "lower numbers fill more seats",
+        "ranked by share of seats filled",
     )
 else:
-    c3.metric("Double-A capacity rank", "—")
+    c3.metric("Binghamton's rank among Double-A teams (2025)", "—")
 
 st.divider()
 
-# ─── 3 finding-card teasers ────────────────────────────────────────────────
-st.markdown("#### What the data says")
-st.caption("Click a card to read the full finding.")
+# ─── 4 finding-card teasers ────────────────────────────────────────────────
+st.markdown("#### The four findings, in order")
+st.caption("Click a card to read the page. Or use the sidebar on the left.")
 
-f1, f2, f3 = st.columns(3)
+f1, f2 = st.columns(2)
 with f1:
     with st.container(border=True):
-        st.markdown("**Saturdays**")
+        st.markdown("**1. Saturdays**")
         st.markdown(
-            "Friday outdraws Saturday at home — every season since 2023. "
-            "The promo calendar is inverted."
+            "Friday outdraws Saturday at home in Binghamton — every season "
+            "since 2023. The data points to one cause."
         )
         st.page_link("pages/findings/01_Saturdays.py", label="Read →")
 
 with f2:
     with st.container(border=True):
-        st.markdown("**Sundays**")
+        st.markdown("**2. Sundays**")
         st.markdown(
-            "Sunday attendance has fallen every year since 2023, and the "
-            "league has not. The cause is less settled."
+            "Binghamton's Sunday attendance has fallen every year since 2023. "
+            "The rest of Double-A has held steady."
         )
         st.page_link("pages/findings/02_Sundays.py", label="Read →")
 
+f3, f4 = st.columns(2)
 with f3:
     with st.container(border=True):
-        st.markdown("**The League is Shifting**")
+        st.markdown("**3. The League is Shifting**")
         st.markdown(
-            "The weekend premium is compressing across MiLB. Weekday "
-            "attendance is holding. That reframes the playbook."
+            "Stepping back: across all of Minor League Baseball, Friday and "
+            "Saturday are quietly losing their edge. Weekdays are holding up."
         )
         st.page_link("pages/findings/03_The_League_Is_Shifting.py", label="Read →")
+
+with f4:
+    with st.container(border=True):
+        st.markdown("**4. Rituals**")
+        st.markdown(
+            "What weekly recurring promotions (\"Thirsty Thursday,\" \"Taco "
+            "Tuesday,\" Family Sunday) look like at the best-drawing teams — "
+            "and where Binghamton fits."
+        )
+        st.page_link("pages/findings/04_Rituals.py", label="Read →")
 
 st.divider()
 
 # ─── Below the fold: map + peer leaders ────────────────────────────────────
 st.markdown("#### Who else is out there")
 st.caption(
-    "Every MiLB team in one view, so peer comparison takes a click rather than "
-    "a spreadsheet. Use this when you want to see what teams in your "
-    "neighborhood are doing."
+    "Before getting into the findings — here's the whole league on one map. "
+    "Every Minor League ballpark in the country, color-coded so you can see "
+    "at a glance who's filling seats and who isn't. The findings that follow "
+    "all reference this peer set."
 )
 
 map_df = load_map_data()
@@ -388,19 +405,24 @@ else:
             )
 
     with side_col:
-        st.markdown("**Top 5 Double-A by capacity (2025)**")
-        st.caption("Teams worth a peer study.")
+        st.markdown("**Top 5 Double-A teams (2025)**")
+        st.caption("Best at filling their ballparks. Worth a closer look.")
         if not leaders.empty:
             for _, row in leaders.iterrows():
                 pct = row["cap_util"] * 100
                 st.markdown(
                     f"**{row['team_name']}**  \n"
-                    f"<small>{pct:.0f}% seats filled · "
-                    f"{row['avg_att']:,.0f} avg</small>",
+                    f"<small>{pct:.0f}% of seats filled · "
+                    f"{row['avg_att']:,.0f} fans per game</small>",
                     unsafe_allow_html=True,
                 )
                 st.divider()
         else:
             st.caption("No leaderboard data available.")
+
+st.divider()
+st.markdown("**Ready? Start with the first finding.**")
+st.page_link("pages/findings/01_Saturdays.py",
+             label="Next: 1. Saturdays →")
 
 render_footer()

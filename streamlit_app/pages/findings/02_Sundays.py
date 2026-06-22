@@ -127,21 +127,29 @@ def load_rp_sun_promo_mix() -> pd.DataFrame:
 
 # -- Render -------------------------------------------------------------------
 
-st.title("Sundays")
+st.title("2. Sundays")
 st.markdown(
-    "### Sunday attendance has fallen every season since 2023, and the league "
-    "has not."
+    "### Binghamton's Sunday attendance has fallen every year since 2023. "
+    "The rest of Double-A has held steady."
 )
 st.caption(
-    "Unlike the Saturday gap, the Sunday story does not have a single tidy "
-    "cause yet. This page lays out the evidence; the prescription needs "
-    "another round of analysis before it's actionable."
+    "Unlike Saturday, the Sunday gap doesn't have one tidy cause yet. This "
+    "page shows the gap clearly and lays out the most likely explanations, "
+    "honestly labeled as hypotheses rather than conclusions."
 )
+
+with st.container(border=True):
+    st.markdown(
+        "**About this page.** The first chart compares Binghamton to the "
+        "league-wide Double-A average. After that, the page returns to "
+        "Binghamton-only numbers and finishes with a small list of "
+        "high-performing Double-A teams worth studying."
+    )
 
 st.divider()
 
 # ─── Section 1: What we see ────────────────────────────────────────────────
-st.subheader("What we see")
+st.subheader("What the data shows")
 
 rp = load_rp_sundays()
 da = load_doublea_sundays()
@@ -156,11 +164,17 @@ combo = pd.concat([rp[["season", "avg_cap", "label"]], da[["season", "avg_cap", 
 combo["cap_pct"] = (combo["avg_cap"] * 100).round(1)
 combo["season"] = combo["season"].astype(str)
 
+st.markdown(
+    "**Chart 1 — Binghamton vs. the Double-A league average.** Each line is "
+    "the share of seats filled on Sundays, season by season."
+)
+
 fig = px.line(
     combo, x="season", y="cap_pct", color="label",
     markers=True,
     color_discrete_map={"Binghamton": RP_COLOR, "Double-A average": PEER_COLOR},
-    labels={"cap_pct": "% of seats filled", "season": "Season", "label": ""},
+    labels={"cap_pct": "% of seats filled on Sundays",
+            "season": "Season", "label": ""},
 )
 fig.update_traces(line=dict(width=3), marker=dict(size=10))
 fig.update_layout(
@@ -180,14 +194,15 @@ rp_t = rp_t[["Season", "Sundays played", "Avg attendance", "% of seats filled"]]
 st.dataframe(rp_t, use_container_width=True, hide_index=True)
 
 st.caption(
-    "Binghamton's Sunday line is the lower one, and it's falling. The league "
-    "line wobbles but stays in the 50s. Note 2026 is partial (mid-June)."
+    "How to read it: Binghamton (purple) is the lower line, and it's falling. "
+    "The Double-A average (grey) wobbles but stays in the 50% range. 2026 is "
+    "partial (through mid-June)."
 )
 
 st.divider()
 
 # ─── Section 2: Why it matters ─────────────────────────────────────────────
-st.subheader("Why it matters")
+st.subheader("Why it matters — in seats")
 
 # 2025 numbers for the dollars/seats translation
 rp_2025 = rp[rp["season"] == 2025]
@@ -200,26 +215,28 @@ if not rp_2025.empty and not da_2025.empty:
     annual = gap * n_sun
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Binghamton Sunday avg (2025)", f"{rp_avg:,.0f}")
-    c2.metric("Double-A Sunday avg (2025)", f"{da_avg:,.0f}",
-              f"+{gap:,.0f} vs Binghamton")
-    c3.metric("Annualized gap", f"~{annual:,.0f} fans",
-              f"{n_sun} home Sundays")
+    c1.metric("Binghamton Sunday avg, 2025", f"{rp_avg:,.0f} fans")
+    c2.metric("Double-A Sunday avg, 2025", f"{da_avg:,.0f} fans",
+              f"+{gap:,.0f} more than Binghamton")
+    c3.metric("If Sundays matched the league",
+              f"~{annual:,.0f} more fans",
+              f"across {n_sun} home Sundays")
 
 st.markdown(
-    "Sunday is supposed to be a family day. League-wide it holds at about "
-    "half capacity. Binghamton has fallen below a third — and it has fallen "
-    "every year. The opportunity is large; the question is what to do about it."
+    "Sunday is supposed to be the family-day matinee. League-wide it holds "
+    "at roughly half-full. Binghamton has fallen below a third — and it has "
+    "slipped every year. The opportunity is large. The question is what "
+    "to do about it."
 )
 
 st.divider()
 
 # ─── Section 3: What's behind it ───────────────────────────────────────────
-st.subheader("What's behind it (working hypotheses)")
+st.subheader("What's behind it — three hypotheses, not yet proven")
 
 st.markdown(
-    "We have a few candidate explanations. None of them is yet supported the "
-    "way the Saturday fireworks finding is. Listing them honestly so they can "
+    "There are a few likely explanations. None of them is locked in the way "
+    "the Saturday fireworks finding is. Listing them honestly so they can "
     "be tested:"
 )
 
@@ -234,44 +251,50 @@ if not rp_promos.empty:
     show = show.rename(columns={"season": "Season", "n": "Sundays"})
     show = show[["Season", "Sundays", "Fireworks %", "Giveaway %",
                  "Kids / Family %", "Community %"]]
-    st.markdown("**Binghamton's Sunday promo mix:**")
+    st.markdown(
+        "**Table — Binghamton only. Sunday promotions by year:**"
+    )
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.caption(
-        "Kids / Family is consistently on the calendar — but the attendance "
-        "numbers above suggest it isn't enough on its own."
+        "Kids and Family promotions are on most Sundays — but the attendance "
+        "numbers above suggest that isn't enough on its own."
     )
 
 st.markdown("""
-**Hypothesis 1 — game start time.**
-Most Binghamton Sundays are 1 p.m. matinees. Matinees underperform evening
-games across the league. Worth testing whether a different start time on
-selected Sundays moves the needle.
+**Hypothesis 1 — the start time.**
+Most Binghamton Sundays start at 1 p.m. Matinees draw less than evening
+games at most ballparks. Worth testing whether one or two Sundays moved to
+a 6 p.m. start would lift the gates.
 
-**Hypothesis 2 — promo ceiling.**
-Kids / Family promos are present most Sundays. They may help, but other
-Double-A teams that win on Sunday combine family programming with bigger
-draws (concerts, marquee giveaways, post-game events). The mix matters as
-much as any single flag.
+**Hypothesis 2 — the promotional mix isn't enough.**
+Kids and Family promotions are on the calendar most Sundays. They probably
+help. But the Double-A teams that *win* on Sunday pair family programming
+with bigger draws (concerts, marquee giveaways, after-game events). The mix
+may matter more than any one promotion on its own.
 
-**Hypothesis 3 — the Saturday spillover.**
-If Saturday is the underwhelming night (see the Saturdays page), Sunday
-may inherit some of that weekend disappointment. The two should be diagnosed
-together, not separately.
+**Hypothesis 3 — Saturday is bleeding into Sunday.**
+If Saturday underdelivers (see the previous page), some of that weekend
+fatigue may carry into Sunday. The two days may need to be diagnosed as
+one weekend rather than two separate problems.
 """)
 
 # Peer inspiration -- who's killing Sundays
 leaders = load_doublea_sunday_leaders()
 if not leaders.empty:
-    st.markdown("**Some Double-A teams treat Sunday very differently:**")
+    st.markdown(
+        "**Table — five Double-A teams who treat Sunday very differently.** "
+        "The best Sunday performers in 2025."
+    )
     show = leaders.copy()
-    show["Avg attendance"] = show["avg_att"].round(0).astype(int)
+    show["Average attendance"] = show["avg_att"].round(0).astype(int)
     show["% of seats filled"] = (show["avg_cap"] * 100).round(0).astype(int).astype(str) + "%"
     show = show.rename(columns={"team_name": "Team", "n": "Sundays"})
-    show = show[["Team", "Sundays", "Avg attendance", "% of seats filled"]]
+    show = show[["Team", "Sundays", "Average attendance", "% of seats filled"]]
     st.dataframe(show, use_container_width=True, hide_index=True)
     st.caption(
-        "Top 5 Double-A by Sunday capacity, 2025. Portland and Somerset run "
-        "Sunday at near-capacity. Their Sunday playbooks are worth a closer look."
+        "Portland and Somerset are running Sunday at close to a full house. "
+        "Their Sunday playbooks are the most useful place to look for "
+        "borrowable ideas."
     )
 
 st.divider()
@@ -281,38 +304,46 @@ st.subheader("What to do with this")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("**Strategic — needs another pass of analysis**")
+    st.markdown("**Bigger picture — needs another round of analysis**")
     st.markdown(
-        "- Build a peer-study cut comparing Binghamton's Sunday promo card to "
-        "Portland's and Somerset's — what specifically do they put on Sunday "
-        "that Binghamton doesn't?\n"
-        "- Decide whether to diagnose Sunday on its own or as the back half "
-        "of a weekend, since the Saturday finding may bleed in here.\n"
-        "- This finding earns a follow-up project, not an immediate prescription."
+        "- Take a closer look at Portland's and Somerset's Sunday promotional "
+        "calendars side-by-side with Binghamton's — what specifically do they "
+        "run on Sunday that Binghamton doesn't?\n"
+        "- Decide whether Sunday should be looked at on its own, or as the "
+        "back half of a weekend (since the Saturday finding may be bleeding "
+        "into here).\n"
+        "- This finding earns a follow-up project. It isn't ready for a "
+        "direct prescription yet."
     )
 
 with c2:
-    st.markdown("**Tactical — what's testable now**")
+    st.markdown("**For the rest of 2026 — what's testable now**")
     st.markdown(
-        "- Pick one upcoming Sunday and over-program it: bring forward a "
+        "- Pick one upcoming Sunday and over-program it. Bring forward a "
         "promotion that would normally land midweek (theme night, autograph "
-        "session, big giveaway). Measure against the season-average Sunday.\n"
-        "- If a 6 p.m. start is logistically possible on any single Sunday, "
-        "that's a clean A/B test on the matinee hypothesis.\n"
-        "- Don't draw conclusions from one game — but one game gets a real "
-        "data point on the board."
+        "session, big giveaway). Compare against the season-average Sunday.\n"
+        "- If a 6 p.m. start is possible on even a single Sunday, that's a "
+        "clean test of the matinee hypothesis.\n"
+        "- One game won't prove the story — but it puts a real data point "
+        "on the board to build on."
     )
 
 st.info(
-    "**Honest framing:** This page raises the right questions but does not yet "
-    "answer them. If Sunday is a meeting topic, the next step is a focused "
-    "peer-study analysis — not a campaign roll-out.",
+    "**Honest read:** this page raises the right questions but does not yet "
+    "answer them. If Sunday becomes a meeting topic, the next step is a "
+    "focused side-by-side study of Portland's and Somerset's playbook — "
+    "not a campaign rollout.",
     icon=":material/lightbulb:",
 )
 
 st.divider()
 
-# ─── Section 5: See also ──────────────────────────────────────────────────
+# ─── Next + See also ──────────────────────────────────────────────────────
+st.markdown("**Next page in the walk-through:**")
+st.page_link("pages/findings/03_The_League_Is_Shifting.py",
+             label="Next: 3. The League is Shifting →")
+
+st.markdown("")
 see_also([
     ("Peer Playbook",
      "pages/12_Peer_Playbook.py",
@@ -322,7 +353,7 @@ see_also([
      "calendar effects including day-of-week and start time"),
     ("Promo Strategy",
      "pages/7_Promo_Strategy.py",
-     "the full promo strategy view"),
+     "the full promotional strategy view"),
 ])
 
 render_footer(scripts=["build_features"])
