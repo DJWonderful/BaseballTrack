@@ -194,7 +194,39 @@ def load_ritual_family_landscape() -> pd.DataFrame:
     """
     return query_df(f"""
         WITH classified AS (
-          SELECT p.*, g.home_team_id, g.season,
+          SELECT g.home_team_id, g.season,
+                 {RITUAL_FAMILY_CASE} AS ritual_family
+            FROM milb.game_promotions p
+            JOIN milb.games g ON g.game_pk = p.game_pk
+           WHERE p.is_recurring = TRUE
+             AND p.enrichment_method IS NOT NULL
+             AND g.sport_id = {DOUBLE_A_SPORT_ID}
+             AND g.season = 2025
+        )
+        SELECT ritual_family,
+               COUNT(DISTINCT home_team_id) AS n_teams,
+               COUNT(*) AS n_games,
+               BOOL_OR(home_team_id = {RUMBLE_PONIES_ID}) AS rp_runs
+          FROM classified
+         WHERE ritual_family IS NOT NULL
+         GROUP BY ritual_family
+        HAVING COUNT(DISTINCT home_team_id) >= 2
+            OR BOOL_OR(home_team_id = {RUMBLE_PONIES_ID})
+         ORDER BY n_teams DESC, n_games DESC
+    """)
+
+
+def load_ritual_family_typical_day() -> dict:
+    """Return {ritual_family: 'Tue'} mapping from the most common day-of-week
+    that ritual family runs on across Double-A.
+
+    Implemented with ROW_NUMBER instead of MODE() WITHIN GROUP because the
+    DuckDB build used on Streamlit Cloud is not consistent across versions
+    on ordered-set aggregates.
+    """
+    df = query_df(f"""
+        WITH classified AS (
+          SELECT g.game_date,
                  {RITUAL_FAMILY_CASE} AS ritual_family
             FROM milb.game_promotions p
             JOIN milb.games g ON g.game_pk = p.game_pk
@@ -203,49 +235,23 @@ def load_ritual_family_landscape() -> pd.DataFrame:
              AND g.sport_id = {DOUBLE_A_SPORT_ID}
              AND g.season = 2025
         ),
-        by_family AS (
+        per_dow AS (
           SELECT ritual_family,
-                 COUNT(DISTINCT home_team_id) AS n_teams,
-                 COUNT(*) AS n_games,
-                 BOOL_OR(home_team_id = {RUMBLE_PONIES_ID}) AS rp_runs,
-                 MODE() WITHIN GROUP (ORDER BY EXTRACT(DOW FROM (
-                   SELECT game_date FROM milb.games WHERE game_pk = classified.game_pk
-                 ))) AS typical_dow_raw
+                 CAST(EXTRACT(DOW FROM game_date) AS INTEGER) AS dow_raw,
+                 COUNT(*) AS n
             FROM classified
            WHERE ritual_family IS NOT NULL
-           GROUP BY ritual_family
+           GROUP BY ritual_family, CAST(EXTRACT(DOW FROM game_date) AS INTEGER)
+        ),
+        ranked AS (
+          SELECT ritual_family, dow_raw, n,
+                 ROW_NUMBER() OVER (PARTITION BY ritual_family
+                                    ORDER BY n DESC, dow_raw ASC) AS rn
+            FROM per_dow
         )
-        SELECT ritual_family,
-               n_teams,
-               n_games,
-               rp_runs
-          FROM by_family
-         WHERE n_teams >= 2 OR rp_runs = TRUE
-         ORDER BY n_teams DESC, n_games DESC
-    """)
-
-
-def load_ritual_family_typical_day() -> dict:
-    """Return {ritual_family: 'Tue'} mapping from the most common day-of-week
-    that ritual family runs on across Double-A. Done as a separate, simpler
-    query because MODE WITHIN GROUP nested with a CTE was awkward.
-    """
-    df = query_df(f"""
-        WITH classified AS (
-          SELECT p.is_recurring, p.enrichment_method, g.home_team_id, g.game_date,
-                 {RITUAL_FAMILY_CASE} AS ritual_family
-            FROM milb.game_promotions p
-            JOIN milb.games g ON g.game_pk = p.game_pk
-           WHERE p.is_recurring = TRUE
-             AND p.enrichment_method IS NOT NULL
-             AND g.sport_id = {DOUBLE_A_SPORT_ID}
-             AND g.season = 2025
-        )
-        SELECT ritual_family,
-               MODE() WITHIN GROUP (ORDER BY EXTRACT(DOW FROM game_date)) AS dow_raw
-          FROM classified
-         WHERE ritual_family IS NOT NULL
-         GROUP BY ritual_family
+        SELECT ritual_family, dow_raw
+          FROM ranked
+         WHERE rn = 1
     """)
     if df.empty:
         return {}
@@ -293,9 +299,11 @@ st.markdown(
 )
 st.caption(
     "Binghamton runs a recurring promotion on roughly a quarter of home games "
-    "in 2025, the second-highest rate among Double-A teams in the data. The "
-    "composition leans toward kids and family audiences. Peer top performers "
-    "lean toward adult weeknight food and drink formats."
+    "in 2025. That is ahead of well-known clubs like the Portland Sea Dogs and "
+    "the Erie SeaWolves, but well below the league leaders who run rituals on "
+    "more than half their schedule. The composition leans toward kids and "
+    "family audiences. Peer top performers lean toward adult weeknight food "
+    "and drink formats."
 )
 
 st.divider()
@@ -314,8 +322,8 @@ c1.metric(
 )
 c2.metric(
     "Rank in Double-A",
-    f"#{rank_info['rank']}" if rank_info["rank"] else "n/a",
-    f"of {rank_info['total']} teams" if rank_info["rank"] else None,
+    f"#{rank_info['rank']} of {rank_info['total']}" if rank_info["rank"] else "n/a",
+    "ahead of Portland, Erie, Reading" if rank_info["rank"] else None,
 )
 c3.metric(
     "Days of the week with a ritual",
